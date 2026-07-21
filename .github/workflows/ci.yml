@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install mise
+        uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925
+
+      - name: Trust mise config
+        run: mise trust
+
+      - name: Install dependencies
+        run: mise install
+
+      - name: golangci-lint
+        run: mise run lint
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925
+      - run: mise trust
+      - run: mise install
+      - run: mise run vet
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925
+      - run: mise trust
+      - run: mise install
+      - run: mise run test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925
+      - run: mise trust
+      - run: mise install
+      - run: mise run build
+
+  generate-verify:
+    name: Generate verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925
+      - run: mise trust
+      - run: mise install
+      - run: mise run generate
+      - name: Check generated files are committed
+        run: |
+          if [ -n "$(git status --porcelain pkg/apis charts/karpenter-provider-hetzner/crds)" ]; then
+            echo "::error::Generated files are out of date. Run 'mise run generate' and commit the result."
+            git --no-pager diff -- pkg/apis charts/karpenter-provider-hetzner/crds
+            exit 1
+          fi
+
+  lint-chart:
+    name: Helm chart lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925
+      - run: mise trust
+      - run: mise install
+      - run: mise run lint-chart
+
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - vet
+      - test
+      - build
+      - generate-verify
+      - lint-chart
+    if: always()
+    steps:
+      - name: Aggregate
+        run: |
+          jobs=(lint vet test build generate-verify lint-chart)
+          for j in "${jobs[@]}"; do
+            v="${{ needs.[jobs].result }}"
+            if [ "$v" != "success" ]; then
+              echo "::error::Job $j finished with status $v"
+              exit 1
+            fi
+          done

@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "karpenter-provider-hetzner.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "karpenter-provider-hetzner.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.leaderElection.enabled }}
+  replicas: 1
+  {{- else }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "karpenter-provider-hetzner.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Force pod restart whenever the secret contents change so a rotated
+        # token takes effect without bouncing the controller manually.
+        checksum/auth-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "karpenter-provider-hetzner.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "karpenter-provider-hetzner.fullname" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: karpenter-provider-hetzner
+          {{- $tag := default .Chart.AppVersion .Values.image.tag }}
+          {{- with .Values.image }}
+          image: "{{ .repository }}:{{ $tag }}"
+          imagePullPolicy: {{ .pullPolicy }}
+          {{- end }}
+          args:
+            - --log-encoder={{ .Values.logEncoder }}
+            - --log-level={{ .Values.logLevel }}
+            {{- if .Values.leaderElection.enabled }}
+            - --leader-elect=true
+            - --leader-election-namespace={{ .Release.Namespace }}
+            {{- end }}
+          env:
+            - name: CLUSTER_NAME
+              value: {{ required "clusterName is required (see helm-values: clusterName)" .Values.clusterName | quote }}
+            - name: HCLOUD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.secretRef.name }}
+                  key: {{ .Values.auth.secretRef.key }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.health.port }}
+              protocol: TCP
+            - name: webhook
+              containerPort: 9443
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

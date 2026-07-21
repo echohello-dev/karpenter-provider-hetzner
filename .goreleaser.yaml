@@ -1,0 +1,155 @@
+# Goreleaser v2 configuration.
+# Produces multi-arch container images, an OCI-installable Helm chart, SBOMs,
+# cosign signatures, and SLSA L3 provenance.
+
+version: 2
+
+project_name: karpenter-provider-hetzner
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: controller
+    main: ./cmd/controller
+    binary: karpenter-provider-hetzner
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -buildid=
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - DISTRIBUTION.md
+
+dockers:
+  - id: controller
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.url=https://github.com/echohello-dev/{{ .ProjectName }}"
+      - "--label=org.opencontainers.image.source=https://github.com/echohello-dev/{{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .CommitDate }}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+    images:
+      - ghcr.io/echohello-dev/karpenter-provider-hetzner
+    tags:
+      - "v{{ .Version }}"        # plain: v0.1.0
+      - "v{{ .Major }}.{{ .Minor }}"  # floating: v0.1
+      - latest                   # mutable, use with care
+    platforms:
+      - linux/amd64
+      - linux/arm64
+
+docker_manifests:
+  - name_template: ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}
+    image_templates:
+      - ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-amd64
+      - ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-arm64
+
+sboms:
+  - id: sbom
+    artifacts: binary
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: '${artifact}.sig'
+    certificate: '${artifact}.pem'
+    output: false
+    artifacts_globs:
+      - 'sbom'  # sign checksum files via cosign
+
+kos:
+  - ids:
+      - default
+    repository: ghcr.io/echohello-dev/charts/karpenter-provider-hetzner
+    name: karpenter-provider-hetzner
+    base_url: oci://ghcr.io/echohello-dev/charts
+    push_args:
+      - --platform=linux/amd64
+      - --platform=linux/arm64
+
+nfpms:
+  - id: packages
+    package_name: karpenter-provider-hetzner
+    file_name_template: >-
+      {{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats:
+      - deb
+      - rpm
+    maintainer: echohello-dev <noreply@echohello.dev>
+    description: |
+      A Karpenter cloud provider for Hetzner Cloud. Provisions, bin-packs,
+      and autoscales Hetzner Cloud servers as Kubernetes nodes (Talos+Ubuntu).
+    license: Apache-2.0
+    section: utils
+    priority: optional
+
+release:
+  github:
+    owner: echohello-dev
+    name: karpenter-provider-hetzner
+  header: |
+    ## karpenter-provider-hetzner {{ .Tag }}
+
+    Multi-arch container image, OCI Helm chart, SBOM, and cosign signatures
+    have been published as release assets.
+
+    Install with:
+
+    ```
+    helm install karpenter-provider-hetzner \\
+      oci://ghcr.io/echohello-dev/charts/karpenter-provider-hetzner \\
+      --version {{ .Tag }} \\
+      --namespace karpenter \\
+      --set clusterName=$CLUSTER_NAME
+    ```
+  footer: |
+    ## Verification
+
+    - SBOM: `{{ .ProjectName }}_{{ .Version }}_sbom.spdx.json`
+    - Cosign signatures attached to each image digest.
+    - SLSA L3 provenance attached as a GitHub attestation.
+  format: standard
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^chore:.*dependabot"
+      - "^ci:.*\\bci\\b"
+      - "^docs:"
+      - "^test:"
+  groups:
+    - title: "Features"
+      regexp: "^feat"
+    - title: "Bug fixes"
+      regexp: "^fix"
+    - title: "Reverts"
+      regexp: "^revert"
+    - title: "Maintenance"
+      regexp: "^(chore|ci|test|build|refactor)(?:\\([^\\)]+\\))?:.*"
+
+milestones:
+  - close: true
