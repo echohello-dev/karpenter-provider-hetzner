@@ -1,0 +1,29 @@
+# Minimal standalone NodePool referencing the karpenter-provider-hetzner
+# HCloudNodeClass. Apply this after at least one HCloudNodeClass exists.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: small-arm-only
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.hetzner.cloud
+        kind: HCloudNodeClass
+        name: default
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: [arm64]            # Only Ampere CAX types.
+        - key: karpenter.hetzner.cloud/server-family
+          operator: In
+          values: [cax]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: [on-demand]
+  limits:
+    cpu: "16"
+    memory: 32Gi
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m

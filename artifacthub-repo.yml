@@ -1,0 +1,9 @@
+---
+# Artifact Hub repository metadata. See https://artifacthub.io/docs/topics/repositories/#oci-helm-repository
+# This file lives at the root of the source tree so Artifact Hub can verify
+# the package registry. The publish step copies Chart.yaml + values.yaml +
+# crds/ + templates/ into the OCI registry; this metadata file is read by
+# Artifact Hub to learn where to publish.
+owners:
+  - name: echohello-dev
+repositoryID: 00000000-0000-0000-0000-000000000000 # replaced by repo registration

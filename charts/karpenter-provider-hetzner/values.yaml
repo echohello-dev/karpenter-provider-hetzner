@@ -1,0 +1,80 @@
+# Default values for karpenter-provider-hetzner.
+# Override any of these with --set key=value or a values.yaml file.
+
+image:
+  repository: ghcr.io/echohello-dev/karpenter-provider-hetzner
+  tag: ""        # Defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+nameOverride: ""
+fullnameOverride: ""
+
+# clusterName and auth.tokenRef must be set before install.
+# Required — see docs/usage.md for how to source the secret.
+clusterName: ""
+auth:
+  # Reference to a Secret in the controller's namespace that holds the Hetzner
+  # Cloud API token under the key `token`.
+  secretRef:
+    name: hcloud-token
+    key: token
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Apply to the Deployment. The controller needs read on ConfigMaps if you
+# reference userData via Secret (Secrets are read directly by the controller
+# using its own ServiceAccount credentials).
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  fsGroup: 65532
+  runAsNonRoot: true
+  runAsUser: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+
+resources:
+  limits:
+    cpu: 1
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Enable leader-election so two replicas don't fight over the cluster.
+leaderElection:
+  enabled: true
+
+# Logging verbosity for the controller-runtime zap logger.
+logLevel: info
+logEncoder: json          # json | console
+
+metrics:
+  enabled: true
+  port: 8080
+health:
+  enabled: true
+  port: 8081
+
+# Optional node affinity / tolerations the controller pod should respect.
+affinity: {}
+tolerations: []
+nodeSelector: {}
+
+# Karpenter webhooks require this secret reference; create it before install.
+#   kubectl create namespace karpenter
+#   kubectl -n karpenter create secret generic hcloud-token --from-literal=token=$HCLOUD_TOKEN

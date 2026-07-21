@@ -1,0 +1,80 @@
+[tools]
+go = "1.26.5"
+golangci-lint = "latest"
+goreleaser = "latest"
+helm = "latest"
+"go:sigs.k8s.io/controller-tools/cmd/controller-gen" = "v0.20.0"
+
+[env]
+# Allow Go to auto-download the pinned toolchain version declared in go.mod
+# so we never accidentally run against a too-old or too-new Go.
+GOTOOLCHAIN = "auto"
+
+[tasks.default]
+description = "List available tasks"
+alias = "h"
+run = ["mise tasks"]
+
+[tasks.install]
+description = "Install all tool dependencies"
+run = ["mise install"]
+
+[tasks.fmt]
+description = "Format Go code"
+alias = "f"
+run = ["go fmt ./..."]
+
+[tasks.tidy]
+description = "Run go mod tidy"
+run = ["go mod tidy"]
+
+[tasks.vet]
+description = "Run go vet"
+run = ["go vet ./..."]
+
+[tasks.test]
+description = "Run unit tests with race detector"
+alias = "t"
+run = ["go test -race -count=1 ./..."]
+
+[tasks.lint]
+description = "Run golangci-lint"
+alias = "l"
+run = ["golangci-lint run ./..."]
+
+[tasks.generate]
+description = "Run controller-gen to produce CRDs and deep-copy"
+run = [
+  "controller-gen object paths=./pkg/apis/...",
+  "controller-gen crd paths=./pkg/apis/... output:crd:dir=charts/karpenter-provider-hetzner/crds",
+] 
+
+[tasks.generate-verify]
+description = "Verify generated files are up to date"
+depends = ["generate"]
+run = "! git status --porcelain pkg/apis charts/karpenter-provider-hetzner/crds"
+
+[tasks.build]
+description = "Build the controller binary"
+alias = "b"
+run = ["go build -o bin/karpenter-provider-hetzner ./cmd/controller"]
+
+[tasks.ci]
+description = "Run CI checks (lint, vet, test, build, generate-verify)"
+depends = ["lint", "vet", "test", "build", "generate-verify"]
+
+[tasks.docker-build]
+description = "Build the controller docker image"
+run = ["docker build -t ghcr.io/echohello-dev/karpenter-provider-hetzner:dev ."]
+
+[tasks.release]
+description = "Cut a release with goreleaser (requires git tag)"
+alias = "r"
+run = ["goreleaser release --clean"]
+
+[tasks.lint-chart]
+description = "Lint the Helm chart"
+run = ["helm lint charts/karpenter-provider-hetzner"]
+
+[settings]
+experimental = true

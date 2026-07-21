@@ -1,0 +1,73 @@
+# Talos worker on a private network. The image is pinned by an hcloud-label
+# selector so we pick the exact snapshot (version + baked extensions), and
+# the boot machineconfig is sourced from a Secret so it never lands in git.
+apiVersion: karpenter.hetzner.cloud/v1
+kind: HCloudNodeClass
+metadata:
+  name: default
+spec:
+  # Hetzner location(s) the NodeClass may schedule into.
+  locations:
+    - nbg1
+    - fsn1
+  # Private network ID the new servers will attach to.
+  networkID: 1234567
+  imageSelector:
+    family: talos
+    # Pin a specific snapshot by the caph label, so the resulting nodes are
+    # reproducible across rebuilds. Drop this to pick the newest matching
+    # snapshot.
+    selector:
+      caph-image-name: talos-v1.9.5-gvisor
+  # Optional: Hetzner firewalls to attach to the new servers.
+  firewallIDs:
+    - 1234567
+  # Optional: SSH keys installed on the server (Talos worker shouldn't need
+  # these — left here so the field is visible).
+  sshKeyIDs: []
+  # Spread across physical hosts (default).
+  placementGroupStrategy: spread
+  # Don't bill us for the primary IPv4 on a private-network cluster.
+  enablePublicIPv4: false
+  # Disable the public IPv6 too — same rationale.
+  enablePublicIPv6: false
+  # The Talos machine config the worker should boot with. Sourced from a
+  # Secret (preferred) so tokens and CA certs never live in git.
+  userDataSecretRef:
+    namespace: karpenter
+    name: talos-worker
+    key: userData
+---
+# A standard, ARM-leaning NodePool that uses the NodeClass above.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.hetzner.cloud
+        kind: HCloudNodeClass
+        name: default
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: [amd64, arm64]
+        - key: karpenter.hetzner.cloud/server-family
+          operator: In
+          # CAX (Arm/Ampere) is cheap and fast; CPX (Intel x86) is widely
+          # available. Karpenter will pick the cheapest offering that fits
+          # the pending pods.
+          values: [cax, cpx]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: [on-demand]
+  # Resource ceilings apply cluster-wide, summed across NodePools.
+  limits:
+    cpu: "100"
+    memory: 400Gi
+  # Free empty and underused nodes when their workloads fit elsewhere.
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    expireAfter: 720h

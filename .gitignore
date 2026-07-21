@@ -1,0 +1,26 @@
+# Compiled binaries
+/bin/
+/build/
+
+# Test artifacts
+*.out
+coverage.*
+*.test
+
+# Generated files
+zz_generated_*.go
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Helm renderer output
+charts/**/charts/*.tgz
+
+# Local secrets / tokens
+.env
+.env.local
+*.secret.yaml

@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  goreleaser:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925
+      - run: mise trust
+      - run: mise install
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4
+
+      - name: Generate CRDs
+        run: mise run generate
+
+      - name: Verify generated files are committed
+        run: |
+          if [ -n "$(git status --porcelain pkg/apis charts/karpenter-provider-hetzner/crds)" ]; then
+            echo "::error::Generated files are out of date at release time."
+            exit 1
+          fi
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release artifacts (no-op, goreleaser does it)
+        if: always()
+        run: echo "release done"

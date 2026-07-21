@@ -1,0 +1,38 @@
+# dependabot configuration for karpenter-provider-hetzner.
+version: 2
+
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "deps"
+    groups:
+      k8s:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/controller-runtime"
+          - "sigs.k8s.io/karpenter"
+      aws:
+        patterns:
+          - "github.com/aws/*"
+          - "github.com/awslabs/*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - dependencies
