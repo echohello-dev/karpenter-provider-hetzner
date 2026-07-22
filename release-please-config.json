@@ -1,0 +1,15 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "package-name": "karpenter-provider-hetzner",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
+      "draft": false,
+      "include-component-in-tag": false,
+      "pull-request-title-format": "chore(release): ${version}",
+      "version-file": "pkg/version/version.go"
+    }
+  }
+}

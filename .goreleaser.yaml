@@ -18,6 +18,8 @@ builds:
       - -trimpath
     ldflags:
       - -s -w -buildid=
+      # Override the version constant from pkg/version.
+      - -X github.com/echohello-dev/karpenter-provider-hetzner/v1/pkg/version.Version={{.Version}}
     env:
       - CGO_ENABLED=0
     goos:
