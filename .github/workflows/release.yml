@@ -1,9 +1,12 @@
 name: Release
 
+# Triggered when release-please creates a GitHub Release. goreleaser picks up
+# the published tag and publishes multi-arch images, OCI Helm chart, SBOM,
+# cosign signatures, and SLSA L3 provenance.
+
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -53,7 +56,3 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload release artifacts (no-op, goreleaser does it)
-        if: always()
-        run: echo "release done"
