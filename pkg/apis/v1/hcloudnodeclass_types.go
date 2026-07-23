@@ -9,19 +9,9 @@ import (
 // +enum
 type PlacementGroupStrategy string
 
-const (
-	PlacementGroupSpread PlacementGroupStrategy = "spread"
-	PlacementGroupNone   PlacementGroupStrategy = "none"
-)
-
 // ImageFamily is the OS image family the NodeClass should boot from.
 // +enum
 type ImageFamily string
-
-const (
-	ImageFamilyTalos  ImageFamily = "talos"
-	ImageFamilyUbuntu ImageFamily = "ubuntu"
-)
 
 // ImageSelector describes how to select a Hetzner snapshot to boot from.
 type ImageSelector struct {

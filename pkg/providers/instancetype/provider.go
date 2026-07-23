@@ -8,11 +8,7 @@ import (
 	"strings"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
-	"sigs.k8s.io/karpenter/pkg/scheduling"
 
 	"github.com/echohello-dev/karpenter-provider-hetzner/v1/pkg/providers/pricing"
 )
@@ -23,10 +19,15 @@ import (
 type Family string
 
 const (
-	FamilyCX    Family = "cx"  // shared Intel x86
-	FamilyCPX   Family = "cpx" // shared Intel x86, newer
-	FamilyCCX   Family = "ccx" // dedicated Intel x86
-	FamilyCAX   Family = "cax" // shared Ampere ARM
+	// FamilyCX is the shared Intel x86 family (cx22, cx32, ...).
+	FamilyCX Family = "cx"
+	// FamilyCPX is the shared Intel x86 newer family (cpx11, cpx21, ...).
+	FamilyCPX Family = "cpx"
+	// FamilyCCX is the dedicated Intel x86 family (ccx13, ccx23, ...).
+	FamilyCCX Family = "ccx"
+	// FamilyCAX is the shared Ampere ARM family (cax11, cax21, ...).
+	FamilyCAX Family = "cax"
+	// FamilyOther is the fallback for any server name that doesn't match a known prefix.
 	FamilyOther Family = "other"
 )
 
@@ -87,38 +88,7 @@ func (p *Provider) MarkUnavailable(serverType, location string) {
 	_ = location
 }
 
-// buildRequirements assembles the nodeSelector-style requirements Karpenter
-// uses to filter instance types. Architecture, capacity type (on-demand),
-// and the family label are stable; per-offering requirements (zone) are
-// layered on top.
-func buildRequirements(st *hcloud.ServerType, arch string) scheduling.Requirements {
-	req := scheduling.NewRequirements(
-		scheduling.NewRequirement(corev1.LabelArchStable, corev1.NodeSelectorOpIn, arch),
-		scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, st.Name),
-		scheduling.NewRequirement(LabelServerFamily, corev1.NodeSelectorOpIn, string(ClassOf(st))),
-		scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, karpenterOnDemand),
-	)
-	return req
-}
-
 // LabelServerFamily is the requirement key for grouping Hetzner server types
 // into families (cx, cpx, ccx, cax, ...). Karpenter NodePools may select
 // against it to steer workloads onto the cheapest available family.
 const LabelServerFamily = "karpenter.hetzner.cloud/server-family"
-
-// karpenterOnDemand mirrors karpenter.sh/capacity-type=spot|on-demand.
-// Hetzner Cloud has no spot market, so we hard-code "on-demand".
-const karpenterOnDemand = "on-demand"
-
-// toCapacity builds the ResourceList for the per-server CPU/Memory/Disk/Pods
-// capacities Karpenter reports on the NodeClaim.
-func toCapacity(st *hcloud.ServerType) corev1.ResourceList {
-	memBytes := int64(float64(st.Memory) * 1024 * 1024 * 1024) // hcloud.Memory is GB float
-	diskBytes := int64(st.Disk) * 1024 * 1024 * 1024
-	return corev1.ResourceList{
-		corev1.ResourceCPU:              *resource.NewMilliQuantity(int64(st.Cores)*1000, resource.DecimalSI),
-		corev1.ResourceMemory:           *resource.NewQuantity(memBytes, resource.BinarySI),
-		corev1.ResourceEphemeralStorage: *resource.NewQuantity(diskBytes, resource.BinarySI),
-		corev1.ResourcePods:             *resource.NewQuantity(110, resource.DecimalSI),
-	}
-}

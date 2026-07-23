@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 10m
   tests: true
@@ -7,10 +9,7 @@ linters:
   enable:
     - errcheck
     - errorlint
-    - gofmt
-    - goimports
     - gosec
-    - gci
     - ineffassign
     - misspell
     - nakedret
@@ -26,32 +25,40 @@ linters:
     - usestdlibvars
     - wastedassign
 
-linters-settings:
-  gci:
-    sections:
-      - standard
-      - default
-      - prefix(localmodule)
-  goimports:
-    local-prefixes: github.com/echohello-dev/karpenter-provider-hetzner
-  revive:
+  settings:
+    revive:
+      rules:
+        - name: dot-imports
+          disabled: true
+        - name: package-comments
+        - name: exported
+
+  exclusions:
     rules:
-      - name: dot-imports
-        disabled: true
-      - name: package-comments
-      - name: exported
+      - linters:
+          - staticcheck
+        text: "SA1019:" # ignore deprecated calls to upstream Karpenter APIs during staged migration
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+    - gci
+
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/echohello-dev/karpenter-provider-hetzner)
+    goimports:
+      local-prefixes: github.com/echohello-dev/karpenter-provider-hetzner
+
+  exclusions:
+    paths:
+      - _test\.go
 
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-        - gci
-    - linters:
-        - staticcheck
-      text: "SA1019:" # ignore deprecated calls to upstream Karpenter APIs during staged migration
-
   exclude-dirs:
     - charts
     - hack
