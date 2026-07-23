@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	karpcp "sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
@@ -30,18 +28,4 @@ func (cp *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCl
 	_ = ctx
 	_ = nodeClaim
 	return "", fmt.Errorf("cloudprovider.IsDrifted: not yet implemented (TODO: route to instance.Provider.Get + per-attribute drift checks)")
-}
-
-// helperCapacity builds a corev1.ResourceList for a server with the given
-// cores/memoryGB/diskGB. Used while Get/List bodies are stubs to keep the
-// package compiling. Delete once Get/List are implemented.
-func helperCapacity(cores int, memoryGB int, diskGB int) corev1.ResourceList {
-	memBytes := int64(memoryGB) * 1024 * 1024 * 1024
-	diskBytes := int64(diskGB) * 1024 * 1024 * 1024
-	return corev1.ResourceList{
-		corev1.ResourceCPU:              *resource.NewMilliQuantity(int64(cores)*1000, resource.DecimalSI),
-		corev1.ResourceMemory:           *resource.NewQuantity(memBytes, resource.BinarySI),
-		corev1.ResourceEphemeralStorage: *resource.NewQuantity(diskBytes, resource.BinarySI),
-		corev1.ResourcePods:             *resource.NewQuantity(110, resource.DecimalSI),
-	}
 }

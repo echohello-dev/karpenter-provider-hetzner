@@ -58,11 +58,6 @@ type CreateOpts struct {
 // from apis/v1. Use apis.PublicIPv4Enabled(...) to derive it where needed.
 type PlacementGroupStrategy string
 
-const (
-	PlacementGroupSpread PlacementGroupStrategy = "spread"
-	PlacementGroupNone   PlacementGroupStrategy = "none"
-)
-
 // Create provisions an hcloud server and tags it for Karpenter.
 //
 // TODO: implement using hcloud.ServerCreateOpts with Labels merged from
