@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.2](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.1...v0.1.2) (2026-07-23)
+
+
+### Features
+
+* scaffold karpenter-provider-hetzner ([0176a08](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/0176a081b4f87b5a6ca4519e753d50f0ef7703e2))
+
+
+### Bug Fixes
+
+* **ci:** migrate to golangci-lint v2 and remove dead scaffold code ([#9](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/9)) ([606f7be](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/606f7be5a650d7745173a39452ebbb29344cc9ca))
+
 ## [0.1.1](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.0...v0.1.1) (2026-07-23)
 
 
