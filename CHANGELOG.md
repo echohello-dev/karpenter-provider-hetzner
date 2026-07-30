@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.2](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.1...v0.1.2) (2026-07-30)
+
+
+### Features
+
+* **cloudprovider:** implement Create, Delete, Get, List, GetInstanceTypes, and drift ([#22](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/22)) ([e732fcc](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/e732fcc798f2074a01ccafc54341fccb87cdac01))
+* implement hcloudnodeclass reconciler ([#20](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/20)) ([40a14a6](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/40a14a61dd20b37190c7823724376bed27b7cc31))
+* **pricing:** implement Price with lazy fetch + IPv4 surcharge ([#13](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/13)) ([2c7ea27](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/2c7ea27af2e840c29ee03a0d07ef1a08f4a2a18e))
+* **providers:** implement hcloud server, instancetype, and image providers ([#21](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/21)) ([d81ee3d](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/d81ee3de46e6ac0f30e9ce3599bf4d40835f583c))
+* wire karpenter runtime and helm chart for hcloud provider ([#23](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/23)) ([7c3085e](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/7c3085e43caead2bef72a69bbea9fd68133207e7))
+
 ## [0.1.1](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.0...v0.1.1) (2026-07-23)
 
 
