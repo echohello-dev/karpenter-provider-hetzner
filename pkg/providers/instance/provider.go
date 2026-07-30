@@ -5,6 +5,8 @@ package instance
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
@@ -55,16 +57,40 @@ type CreateOpts struct {
 }
 
 // PlacementGroupStrategy is reproduced here to keep this package independent
-// from apis/v1. Use apis.PublicIPv4Enabled(...) to derive it where needed.
+// from apis/v1.
 type PlacementGroupStrategy string
 
 // Create provisions an hcloud server and tags it for Karpenter.
-//
-// TODO: implement using hcloud.ServerCreateOpts with Labels merged from
-// NodeClaim+NodePool, the right PlacementGroup selected by Strategy, and
-// PublicNet computed from EnablePublicIPv4/IPv6.
 func (p *Provider) Create(ctx context.Context, opts CreateOpts) (*hcloud.Server, error) {
-	return nil, fmt.Errorf("instance.Create: not yet implemented (TODO: hcloud.ServerCreateOpts + LabelMerge + PlacementGroup)")
+	var placementGroup *hcloud.PlacementGroup
+	if opts.PlacementGroupStrategy != "none" {
+		var err error
+		placementGroup, err = p.placementGroup(ctx, opts.PlacementGroupStrategy)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	result, _, err := p.client.Server.Create(ctx, hcloud.ServerCreateOpts{
+		Name:           opts.Name,
+		ServerType:     &hcloud.ServerType{Name: opts.ServerType},
+		Image:          opts.Image,
+		SSHKeys:        sshKeys(opts.SSHKeyIDs),
+		Location:       &hcloud.Location{Name: opts.Location},
+		UserData:       opts.UserData,
+		Labels:         p.serverLabels(opts),
+		Networks:       networks(opts.NetworkID),
+		Firewalls:      firewalls(opts.FirewallIDs),
+		PlacementGroup: placementGroup,
+		PublicNet: &hcloud.ServerCreatePublicNet{
+			EnableIPv4: opts.EnablePublicIPv4,
+			EnableIPv6: opts.EnablePublicIPv6,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("instance: create server %q: %w", opts.Name, err)
+	}
+	return result.Server, nil
 }
 
 // Get fetches a server by its hcloud-formatted provider ID (hcloud://<id>).
@@ -72,13 +98,15 @@ func (p *Provider) Create(ctx context.Context, opts CreateOpts) (*hcloud.Server,
 // Returns (nil, nil) when the server is absent so callers can distinguish
 // "missing" from "got an error".
 func (p *Provider) Get(ctx context.Context, providerID string) (*hcloud.Server, error) {
-	_, _, err := ParseProviderID(providerID)
+	id, _, err := ParseProviderID(providerID)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: implement using hcloud Client.Server.GetByID.
-	_ = ctx
-	return nil, fmt.Errorf("instance.Get: not yet implemented")
+	server, _, err := p.client.Server.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("instance: get server %d: %w", id, err)
+	}
+	return server, nil
 }
 
 // List returns all servers owned by this cluster.
@@ -86,8 +114,13 @@ func (p *Provider) Get(ctx context.Context, providerID string) (*hcloud.Server, 
 // Scoped by the karpenter.sh/cluster=<CLUSTER_NAME> label so two clusters
 // sharing one Hetzner project never see each other's servers.
 func (p *Provider) List(ctx context.Context) ([]*hcloud.Server, error) {
-	_ = ctx
-	return nil, fmt.Errorf("instance.List: not yet implemented (TODO: ListOpts with label selector)")
+	servers, err := p.client.Server.AllWithOpts(ctx, hcloud.ServerListOpts{
+		ListOpts: hcloud.ListOpts{LabelSelector: clusterLabelKey + "=" + p.clusterName},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("instance: list servers for cluster %q: %w", p.clusterName, err)
+	}
+	return servers, nil
 }
 
 // Delete terminates a server.
@@ -95,17 +128,123 @@ func (p *Provider) List(ctx context.Context) ([]*hcloud.Server, error) {
 // Idempotent: deleting a missing server returns nil so Karpenter's disruption
 // loop can safely retry on transient hcloud errors.
 func (p *Provider) Delete(ctx context.Context, providerID string) error {
-	_, _, err := ParseProviderID(providerID)
+	id, _, err := ParseProviderID(providerID)
 	if err != nil {
 		return err
 	}
-	// TODO: implement using hcloud Client.Server.Delete.
-	_ = ctx
-	return fmt.Errorf("instance.Delete: not yet implemented")
+	server, _, err := p.client.Server.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("instance: get server %d before delete: %w", id, err)
+	}
+	if server == nil {
+		return nil
+	}
+	if server.Labels[clusterLabelKey] != p.clusterName {
+		return fmt.Errorf("instance: server %d is not owned by cluster %q", id, p.clusterName)
+	}
+	if _, _, err := p.client.Server.DeleteWithResult(ctx, server); err != nil {
+		var apiErr hcloud.Error
+		if errors.As(err, &apiErr) && apiErr.Code == hcloud.ErrorCodeNotFound {
+			return nil
+		}
+		return fmt.Errorf("instance: delete server %d: %w", id, err)
+	}
+	return nil
 }
 
-// clusterLabelKey is the hcloud-label key applied to every server we create.
-const clusterLabelKey = "karpenter.sh/cluster"
+func (p *Provider) placementGroup(ctx context.Context, strategy PlacementGroupStrategy) (*hcloud.PlacementGroup, error) {
+	switch strategy {
+	case "", "spread":
+	default:
+		return nil, fmt.Errorf("instance: unsupported placement group strategy %q", strategy)
+	}
+
+	name := placementGroupName(p.clusterName)
+	group, _, err := p.client.PlacementGroup.GetByName(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("instance: get placement group %q: %w", name, err)
+	}
+	if group != nil {
+		if err := p.validatePlacementGroup(group); err != nil {
+			return nil, err
+		}
+		return group, nil
+	}
+
+	result, _, createErr := p.client.PlacementGroup.Create(ctx, hcloud.PlacementGroupCreateOpts{
+		Name:   name,
+		Labels: map[string]string{clusterLabelKey: p.clusterName},
+		Type:   hcloud.PlacementGroupTypeSpread,
+	})
+	if createErr == nil {
+		return result.PlacementGroup, nil
+	}
+
+	group, _, getErr := p.client.PlacementGroup.GetByName(ctx, name)
+	if getErr == nil && group != nil {
+		if err := p.validatePlacementGroup(group); err != nil {
+			return nil, err
+		}
+		return group, nil
+	}
+	return nil, fmt.Errorf("instance: create placement group %q: %w", name, createErr)
+}
+
+func (p *Provider) validatePlacementGroup(group *hcloud.PlacementGroup) error {
+	if group.Type != hcloud.PlacementGroupTypeSpread || group.Labels[clusterLabelKey] != p.clusterName {
+		return fmt.Errorf("instance: placement group %q is not a spread group owned by cluster %q", group.Name, p.clusterName)
+	}
+	return nil
+}
+
+func (p *Provider) serverLabels(opts CreateOpts) map[string]string {
+	labels := make(map[string]string, len(opts.Labels)+3)
+	for key, value := range opts.Labels {
+		labels[key] = value
+	}
+	if opts.NodeClaim != "" {
+		labels[nodeClaimLabelKey] = opts.NodeClaim
+	}
+	if opts.NodePool != "" {
+		labels[nodePoolLabelKey] = opts.NodePool
+	}
+	labels[clusterLabelKey] = p.clusterName
+	return labels
+}
+
+func placementGroupName(clusterName string) string {
+	sum := sha256.Sum256([]byte(clusterName))
+	return fmt.Sprintf("karpenter-%x", sum[:8])
+}
+
+func networks(id int64) []*hcloud.Network {
+	if id == 0 {
+		return nil
+	}
+	return []*hcloud.Network{{ID: id}}
+}
+
+func firewalls(ids []int64) []*hcloud.ServerCreateFirewall {
+	result := make([]*hcloud.ServerCreateFirewall, 0, len(ids))
+	for _, id := range ids {
+		result = append(result, &hcloud.ServerCreateFirewall{Firewall: hcloud.Firewall{ID: id}})
+	}
+	return result
+}
+
+func sshKeys(ids []int64) []*hcloud.SSHKey {
+	result := make([]*hcloud.SSHKey, 0, len(ids))
+	for _, id := range ids {
+		result = append(result, &hcloud.SSHKey{ID: id})
+	}
+	return result
+}
+
+const (
+	clusterLabelKey   = "karpenter.sh/cluster"
+	nodeClaimLabelKey = "karpenter.sh/nodeclaim"
+	nodePoolLabelKey  = "karpenter.sh/nodepool"
+)
 
 // ClusterLabel returns the (key, value) tuple this Provider uses to tag
 // servers it owns. Exposed so other providers (e.g. instance-type) can keep
