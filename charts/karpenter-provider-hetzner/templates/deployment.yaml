@@ -26,7 +26,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      serviceAccountName: {{ include "karpenter-provider-hetzner.fullname" . }}
+      serviceAccountName: {{ include "karpenter-provider-hetzner.serviceAccountName" . }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -39,11 +39,13 @@ spec:
           imagePullPolicy: {{ .pullPolicy }}
           {{- end }}
           args:
-            - --log-encoder={{ .Values.logEncoder }}
             - --log-level={{ .Values.logLevel }}
-            {{- if .Values.leaderElection.enabled }}
-            - --leader-elect=true
+            - --metrics-port={{ .Values.metrics.port }}
+            - --health-probe-port={{ .Values.health.port }}
+            - --leader-election-name={{ include "karpenter-provider-hetzner.fullname" . }}
             - --leader-election-namespace={{ .Release.Namespace }}
+            {{- if not .Values.leaderElection.enabled }}
+            - --disable-leader-election=true
             {{- end }}
           env:
             - name: CLUSTER_NAME
@@ -53,7 +55,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.secretRef.name }}
                   key: {{ .Values.auth.secretRef.key }}
-            - name: POD_NAMESPACE
+            - name: SYSTEM_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
@@ -61,6 +63,18 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: MEMORY_LIMIT
+              valueFrom:
+                resourceFieldRef:
+                  containerName: karpenter-provider-hetzner
+                  divisor: "0"
+                  resource: limits.memory
+            - name: CPU_REQUESTS
+              valueFrom:
+                resourceFieldRef:
+                  containerName: karpenter-provider-hetzner
+                  divisor: 1m
+                  resource: requests.cpu
           ports:
             - name: metrics
               containerPort: {{ .Values.metrics.port }}

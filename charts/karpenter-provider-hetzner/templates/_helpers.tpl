@@ -53,3 +53,11 @@ Fully qualified Secret name.
 {{- define "karpenter-provider-hetzner.secretName" -}}
 {{- printf "%s-%s" (include "karpenter-provider-hetzner.fullname" .) (.Values.auth.secretRef.name | default "hcloud-token") -}}
 {{- end -}}
+
+{{- define "karpenter-provider-hetzner.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{- default (include "karpenter-provider-hetzner.fullname" .) .Values.serviceAccount.name -}}
+{{- else -}}
+{{- required "serviceAccount.name is required when serviceAccount.create=false" .Values.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}

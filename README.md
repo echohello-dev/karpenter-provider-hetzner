@@ -4,7 +4,7 @@ A [Karpenter](https://karpenter.sh) cloud provider for [Hetzner Cloud](https://w
 
 ## Status
 
-**Alpha (pre-1.0).** The interface contract against `sigs.k8s.io/karpenter` is wired and the CRD types reconcile end-to-end, but the providers in `pkg/providers/...` are deliberate stubs returning `not yet implemented`. Fill-in work is documented inline with `TODO:` markers; see `pkg/cloudprovider/cloudprovider.go` and `pkg/providers/{instance,instancetype,pricing,imagefamily}/provider.go` for the hit list.
+**Alpha (pre-1.0).** The controller embeds Karpenter v1.14, reconciles HCloudNodeClass resources, resolves images and dependencies, prices Hetzner offerings, and manages server lifecycle and drift. The implementation is usable for testing, but production hardening and end-to-end cluster coverage are still in progress.
 
 ## Layout
 
@@ -41,7 +41,7 @@ HCLOUD_TOKEN="$HCLOUD_TOKEN" \
   CLUSTER_NAME=my-cluster \
   ./bin/karpenter-provider-hetzner
 
-# 4. Apply an HCloudNodeClass and NodePool (after running karpenter core itself).
+# 4. Apply an HCloudNodeClass and NodePool.
 kubectl apply -f examples/talos-nodeclass.yaml
 ```
 

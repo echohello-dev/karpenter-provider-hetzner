@@ -59,9 +59,8 @@ resources:
 leaderElection:
   enabled: true
 
-# Logging verbosity for the controller-runtime zap logger.
+# Logging verbosity for the controller.
 logLevel: info
-logEncoder: json          # json | console
 
 metrics:
   enabled: true
