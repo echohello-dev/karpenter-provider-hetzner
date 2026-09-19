@@ -52,7 +52,7 @@ run = [
 [tasks.generate-verify]
 description = "Verify generated files are up to date"
 depends = ["generate"]
-run = "! git status --porcelain pkg/apis charts/karpenter-provider-hetzner/crds"
+run = "test -z \"$(git status --porcelain pkg/apis charts/karpenter-provider-hetzner/crds)\""
 
 [tasks.build]
 description = "Build the controller binary"
