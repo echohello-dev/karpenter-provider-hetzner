@@ -20,7 +20,7 @@ pkg/controllers/nodeclass/     # HCloudNodeClass reconciler
 pkg/metrics/                   # Prometheus counters
 charts/karpenter-provider-hetzner/   # OCI-installable Helm chart
 examples/                      # sample manifests
-docs/                          # bootstrap guides
+docs/                          # operator handbook (see docs/README.md)
 ```
 
 ## Quick start (skeleton)
