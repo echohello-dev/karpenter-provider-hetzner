@@ -308,7 +308,13 @@ func TestResolve_IgnoresDeprecatedAndDeleted(t *testing.T) {
 	now := time.Now()
 	nowCopy := now
 	deprecated := newImage(1, "talos v1.9.4", hcloud.ArchitectureX86, now)
-	deprecated.Deprecated = &nowCopy
+	// hcloud-go v2.48+ drives IsDeprecated from the new
+	// DeprecatableResource.Deprecation field; the legacy Deprecated
+	// *time.Time field is read-only on the public Image type now.
+	deprecated.Deprecation = &schema.DeprecationInfo{
+		Announced:        nowCopy,
+		UnavailableAfter: nowCopy,
+	}
 	deleted := newImage(2, "talos v1.9.5", hcloud.ArchitectureX86, now)
 	deleted.Deleted = &nowCopy
 	ts.pageMap["1"] = fakeImagePage{
