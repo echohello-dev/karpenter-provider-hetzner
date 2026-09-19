@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.2...v0.1.3) (2026-09-19)
+
+
+### Bug Fixes
+
+* **deps:** upgrade hcloud-go to 2.48 and update imagefamily test ([#34](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/34)) ([e7bc223](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/e7bc22344997eb1b7257a67703da64a4a70f04a6))
+
 ## [0.1.2](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.1...v0.1.2) (2026-09-19)
 
 
