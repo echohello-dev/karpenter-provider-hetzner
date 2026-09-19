@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 
 # Cache Go module downloads as a separate layer.
