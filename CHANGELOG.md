@@ -1,5 +1,12 @@
 # Changelog
 
+## [26.9.0](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.3...v26.9.0) (2026-09-19)
+
+
+### Miscellaneous Chores
+
+* **release:** switch to calendar versioning (YY.MM.patch) ([#38](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/38)) ([569cbe4](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/569cbe463c167b3a8167d1280f182090a3bbcf29))
+
 ## [0.1.3](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.2...v0.1.3) (2026-09-19)
 
 
