@@ -1,5 +1,30 @@
 # Changelog
 
+## [2026.9.0](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v2026.9.0...v2026.9.0) (2026-09-20)
+
+
+### Features
+
+* **cloudprovider:** implement Create, Delete, Get, List, GetInstanceTypes, and drift ([#22](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/22)) ([014ee71](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/014ee71f67abd8d256dc0e81d9c261e8323d4c85))
+* implement hcloudnodeclass reconciler ([#20](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/20)) ([a9ff958](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/a9ff958a75c0ca3d433f7c4a2e5fe45f9db40324))
+* **pricing:** implement Price with lazy fetch + IPv4 surcharge ([#13](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/13)) ([6830f91](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/6830f9172421c091df642517771ba029c374c1a6))
+* **providers:** implement hcloud server, instancetype, and image providers ([#21](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/21)) ([5a3d2b9](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/5a3d2b91873ca75c3581daa8b801436509ce16c1))
+* scaffold karpenter-provider-hetzner ([878eee4](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/878eee4503a46d304d773c6d763e4a0c41652795))
+* wire karpenter runtime and helm chart for hcloud provider ([#23](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/23)) ([00eb9bd](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/00eb9bdd3eda8106f2ad5398acc5afcd8bfa96f0))
+
+
+### Bug Fixes
+
+* **ci:** migrate to golangci-lint v2 and remove dead scaffold code ([#9](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/9)) ([e878906](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/e878906ad6ea26fe25f0b2a31d7beac7c4dd790c))
+* **deps:** upgrade hcloud-go to 2.48 and update imagefamily test ([#34](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/34)) ([e7bc223](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/e7bc22344997eb1b7257a67703da64a4a70f04a6))
+* make generate-verify detect uncommitted files ([302a37f](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/302a37f4b0cb02e955c0e955844fb1d5a1a83856))
+
+
+### Miscellaneous Chores
+
+* **release:** switch to calendar versioning (YY.MM.patch) ([#38](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/38)) ([569cbe4](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/569cbe463c167b3a8167d1280f182090a3bbcf29))
+* **release:** switch to YYYY.M.patch calver ([#40](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/40)) ([c61e364](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/c61e3647d014f25284df31a001a89d783004aa25))
+
 ## [26.9.0](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v0.1.3...v26.9.0) (2026-09-19)
 
 
