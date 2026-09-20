@@ -2,8 +2,8 @@ apiVersion: v2
 name: karpenter-provider-hetzner
 description: A Karpenter cloud provider for Hetzner Cloud — provisions, bin-packs, and autoscales Hetzner Cloud servers as Kubernetes nodes (Talos + Ubuntu).
 type: application
-version: 26.09.0
-appVersion: 26.09.0
+version: 2026.9.0
+appVersion: 2026.9.0
 home: https://github.com/echohello-dev/karpenter-provider-hetzner
 icon: https://raw.githubusercontent.com/echohello-dev/karpenter-provider-hetzner/main/docs/icon.png
 keywords:
