@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -143,7 +144,7 @@ func TestPrice_SumServerHourlyAndIPv4Surcharge(t *testing.T) {
 		t.Fatalf("Price(cx22): unexpected error: %v", err)
 	}
 	want := 0.006000
-	if !floatNear(got, want, 1e-9) {
+	if !floatNear(got, want) {
 		t.Fatalf("Price(cx22) = %v, want %v", got, want)
 	}
 }
@@ -169,15 +170,14 @@ func TestPrice_MissingIPv4FallsBackToServerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Price(cx22): unexpected error: %v", err)
 	}
-	if !floatNear(got, 0.005, 1e-9) {
+	if !floatNear(got, 0.005) {
 		t.Fatalf("Price(cx22) = %v, want 0.005 (server-only)", got)
 	}
 }
 
 func TestPrice_CachesAcrossCalls(t *testing.T) {
-	// One Price call must trigger exactly one /pricing fetch. A second call
-	// must reuse the cached snapshot, even if the server would otherwise
-	// return an error.
+	// One Price call must trigger exactly one /pricing fetch. Further calls
+	// reuse the cached snapshot for the whole TTL.
 	var calls int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/pricing", func(w http.ResponseWriter, r *http.Request) {
@@ -215,9 +215,11 @@ func TestPrice_CachesAcrossCalls(t *testing.T) {
 }
 
 func TestPrice_FetchErrorIsSticky(t *testing.T) {
-	// If the first fetch fails, every subsequent Price call must surface
-	// the same error without retrying. The server here returns 500 every
-	// time; the client must NOT loop, but it may also not succeed.
+	// While the retry backoff is running, every Price call must surface the
+	// same error without re-fetching. The server here returns 500 every
+	// time; the client must NOT loop inside a single call, but it may also
+	// not succeed. Recovery once the backoff elapses is covered by
+	// TestPrice_FailedFetchIsRetriedAfterBackoff.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/pricing", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -243,13 +245,177 @@ func TestPrice_FetchErrorIsSticky(t *testing.T) {
 		t.Fatalf("error should mention the underlying fetch, got %q", err.Error())
 	}
 
-	// Second call must reuse the sticky error without re-fetching.
+	// Second call reuses the sticky error without re-fetching: it lands
+	// inside the retry backoff, so no second request is issued.
 	_, err2 := p.Price(context.Background(), st("cx22"))
 	if err2 == nil {
 		t.Fatal("expected sticky error on second call, got nil")
 	}
 	if err2.Error() != err.Error() {
 		t.Fatalf("second error differs from first: %q vs %q", err2.Error(), err.Error())
+	}
+}
+
+// TestPrice_FailedFetchIsRetriedAfterBackoff proves a bad first fetch does
+// not poison the provider for the lifetime of the process: the error is
+// reused (without extra API calls) while the backoff is running, then the
+// next attempt after the backoff recovers.
+func TestPrice_FailedFetchIsRetriedAfterBackoff(t *testing.T) {
+	var calls atomic.Int64
+	var failing atomic.Bool
+	failing.Store(true)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/pricing", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if failing.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(schema.PricingGetResponse{Pricing: pricingCatalog("0.005000")})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := hcloud.NewClient(
+		hcloud.WithEndpoint(srv.URL),
+		hcloud.WithToken("token"),
+		hcloud.WithRetryOpts(hcloud.RetryOpts{MaxRetries: 0}),
+	)
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	p := New(client,
+		WithClock(func() time.Time { return now }),
+		WithTTL(time.Hour),
+		WithRetryBackoff(time.Minute),
+	)
+
+	if _, err := p.Price(context.Background(), st("cx22")); err == nil {
+		t.Fatal("expected error while the pricing endpoint is failing, got nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("expected 1 fetch attempt, got %d", got)
+	}
+
+	// Inside the backoff the cached outcome is reused: same error, no request.
+	now = now.Add(10 * time.Second)
+	_, err := p.Price(context.Background(), st("cx22"))
+	if err == nil {
+		t.Fatal("expected the same failure while the backoff is running, got nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("expected no fetch inside the retry backoff, got %d attempts", got)
+	}
+
+	// Backoff elapsed and the endpoint recovered: pricing works again.
+	failing.Store(false)
+	now = now.Add(time.Minute)
+	got, err := p.Price(context.Background(), st("cx22"))
+	if err != nil {
+		t.Fatalf("Price after backoff: %v", err)
+	}
+	if !floatNear(got, 0.006) {
+		t.Fatalf("Price = %v, want 0.006", got)
+	}
+	if attempts := calls.Load(); attempts != 2 {
+		t.Fatalf("expected exactly 2 fetch attempts total, got %d", attempts)
+	}
+}
+
+// TestPrice_StaleCatalogSurvivesRefreshFailure checks the refresh policy: a
+// catalog that has aged out keeps serving when the refresh fails (stale
+// prices beat no prices, which would mark every offering unavailable), and
+// the next healthy attempt picks up the new prices.
+func TestPrice_StaleCatalogSurvivesRefreshFailure(t *testing.T) {
+	var calls atomic.Int64
+	var failing atomic.Bool
+	var hourly atomic.Value
+	hourly.Store("0.005000")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/pricing", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if failing.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(schema.PricingGetResponse{Pricing: pricingCatalog(hourly.Load().(string))})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := hcloud.NewClient(
+		hcloud.WithEndpoint(srv.URL),
+		hcloud.WithToken("token"),
+		hcloud.WithRetryOpts(hcloud.RetryOpts{MaxRetries: 0}),
+	)
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	p := New(client,
+		WithClock(func() time.Time { return now }),
+		WithTTL(time.Hour),
+		WithRetryBackoff(time.Minute),
+	)
+
+	if _, err := p.Price(context.Background(), st("cx22")); err != nil {
+		t.Fatalf("initial Price: %v", err)
+	}
+
+	// Catalog ages out and the refresh fails: the cached price is returned
+	// with no error, so offerings stay schedulable.
+	failing.Store(true)
+	now = now.Add(2 * time.Hour)
+	got, err := p.Price(context.Background(), st("cx22"))
+	if err != nil {
+		t.Fatalf("Price on failed refresh: %v", err)
+	}
+	if !floatNear(got, 0.006) {
+		t.Fatalf("Price = %v, want the stale 0.006", got)
+	}
+
+	// Endpoint recovers: the next attempt past the backoff refreshes the
+	// catalog, which now carries the new hourly rate plus the IPv4 charge.
+	failing.Store(false)
+	hourly.Store("0.007000")
+	now = now.Add(2 * time.Minute)
+	got, err = p.Price(context.Background(), st("cx22"))
+	if err != nil {
+		t.Fatalf("Price after recovery: %v", err)
+	}
+	if !floatNear(got, 0.008) {
+		t.Fatalf("Price = %v, want the refreshed 0.008", got)
+	}
+	if attempts := calls.Load(); attempts != 3 {
+		t.Fatalf("expected 3 fetch attempts (ok, fail, ok), got %d", attempts)
+	}
+}
+
+// pricingCatalog builds a /pricing payload whose cx22 hourly net is the
+// given string. The IPv4 primary-IP rate is fixed at 0.001 so tests can
+// reason about the total, and FloatingIPs mirrors PrimaryIPs to work around
+// the upstream primaryIPPricingFromSchema bug documented above.
+func pricingCatalog(hourlyNet string) schema.Pricing {
+	return schema.Pricing{
+		Currency: "EUR",
+		ServerTypes: []schema.PricingServerType{
+			{
+				Name: "cx22",
+				Prices: []schema.PricingServerTypePrice{
+					{Location: "fsn1", PriceHourly: schema.Price{Net: hourlyNet, Gross: hourlyNet}},
+				},
+			},
+		},
+		FloatingIPs: []schema.PricingFloatingIPType{
+			{Type: "ipv4"},
+		},
+		PrimaryIPs: []schema.PricingPrimaryIP{
+			{
+				Type: "ipv4",
+				Prices: []schema.PricingPrimaryIPTypePrice{
+					{Location: "fsn1", PriceHourly: schema.Price{Net: "0.001", Gross: "0.001"}},
+				},
+			},
+		},
 	}
 }
 
@@ -270,14 +436,16 @@ func TestParsePrice(t *testing.T) {
 		if (err != nil) != tc.wantErr {
 			t.Errorf("parsePrice(%q) err = %v, wantErr %v", tc.in, err, tc.wantErr)
 		}
-		if !tc.wantErr && !floatNear(got, tc.want, 1e-9) {
+		if !tc.wantErr && !floatNear(got, tc.want) {
 			t.Errorf("parsePrice(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }
 
-// floatNear returns true if a and b are within eps of each other.
-func floatNear(a, b, eps float64) bool {
+// floatNear returns true if a and b agree to within 1e-9, which is tight
+// enough for the sub-cent hourly rates these fixtures use.
+func floatNear(a, b float64) bool {
+	const eps = 1e-9
 	d := a - b
 	if d < 0 {
 		d = -d

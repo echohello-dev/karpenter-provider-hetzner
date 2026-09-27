@@ -641,25 +641,6 @@ func TestReconcile_ReconcileAgainIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestBuildLabelSelector(t *testing.T) {
-	cases := []struct {
-		name string
-		in   map[string]string
-		want string
-	}{
-		{"empty", nil, ""},
-		{"single", map[string]string{"a": "b"}, "a=b"},
-		{"sorted", map[string]string{"b": "2", "a": "1"}, "a=1,b=2"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := buildLabelSelector(tc.in); got != tc.want {
-				t.Fatalf("buildLabelSelector(%v) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestArchLabel(t *testing.T) {
 	if got := archLabel(hcloud.ArchitectureX86); got != "amd64" {
 		t.Errorf("archLabel(x86) = %q, want amd64", got)
@@ -681,5 +662,30 @@ func TestReconcile_NotFoundErrorIsTyped(t *testing.T) {
 	}
 	if err := env.kubeClient.Get(context.Background(), types.NamespacedName{Name: "absent"}, &apiv1.HCloudNodeClass{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("expected typed NotFound from fake client, got %v", err)
+	}
+}
+
+// TestReconcile_UnsupportedImageFamilyMarksFalse verifies the controller
+// rejects an out-of-contract family before doing any image API work. The
+// CRD's XValidation catches this on a real cluster, but the controller must
+// not trust admission alone — and it must report it distinctly from "the
+// selector matched nothing".
+func TestReconcile_UnsupportedImageFamilyMarksFalse(t *testing.T) {
+	nc := validNodeClass("bad-family")
+	nc.Spec.ImageSelector = apiv1.ImageSelector{Family: apiv1.ImageFamily("debian")}
+	env := newTestEnv(t, happyPathMux(), nc)
+	r := New(env.kubeClient, env.hcloud)
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "bad-family"}}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	got := env.getNodeClass(t, "bad-family")
+	c := mustCondition(t, got, apiv1.ConditionTypeImagesReady)
+	if c.Status != metav1.ConditionFalse || c.Reason != "ImageSelectorInvalid" {
+		t.Fatalf("expected ImagesReady=False/ImageSelectorInvalid, got %+v", c)
+	}
+	if len(got.Status.ResolvedImages) != 0 {
+		t.Fatalf("expected ResolvedImages cleared, got %+v", got.Status.ResolvedImages)
 	}
 }

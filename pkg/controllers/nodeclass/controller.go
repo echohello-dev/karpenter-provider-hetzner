@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	apiv1 "github.com/echohello-dev/karpenter-provider-hetzner/v1/pkg/apis/v1"
+	"github.com/echohello-dev/karpenter-provider-hetzner/v1/pkg/providers/imagefamily"
 )
 
 // requeueInterval is the cadence at which the controller re-evaluates a
@@ -31,12 +32,16 @@ const requeueInterval = 5 * time.Minute
 type Reconciler struct {
 	kubeClient client.Client
 	hcloud     *hcloud.Client
+	// images resolves snapshots for status.resolvedImages. It shares the
+	// hcloud client with the rest of the reconciler; the provider itself
+	// is stateless.
+	images *imagefamily.Provider
 }
 
 // New builds a Reconciler. kubeClient must be a cache-backed reader for the
 // types this controller watches, and hcloud must be a configured client.
 func New(kubeClient client.Client, hcloud *hcloud.Client) *Reconciler {
-	return &Reconciler{kubeClient: kubeClient, hcloud: hcloud}
+	return &Reconciler{kubeClient: kubeClient, hcloud: hcloud, images: imagefamily.New(hcloud)}
 }
 
 // Reconcile re-evaluates the HCloudNodeClass status.

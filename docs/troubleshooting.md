@@ -66,7 +66,8 @@ required.
 ## `HCloudNodeClass` not Ready
 
 `kubectl describe hcloudnodeclass default` shows
-`Reason=ImageSelectorResolutionFailed` (or similar).
+`Reason=ImageResolutionFailed`, `ImageSelectorInvalid`, or `ImageNotFound`
+under `type=ImagesReady`.
 
 ### `status.resolvedImages` is empty
 
@@ -189,12 +190,12 @@ hcloud server list -o columns=id,name,labels
 
 `kubectl describe nodeclaim` shows `Drift=true`. The most common reasons:
 
-- **`DriftImage`** — the snapshot resolved at create-time is no longer
-  in `status.resolvedImages`. Usually a label was edited. Diff the
-  current image against the selector:
+- **`DriftImage`** — the server is running a different snapshot than the
+  one recorded on the NodeClaim when it was created. Compare both sides:
 
   ```bash
-  kubectl get hcloudnodeclass -o jsonpath='{.items[*].status.resolvedImages}'
+  kubectl get nodeclaim <name> -o jsonpath='{.status.imageID}'
+  hcloud server describe <name>
   ```
 
 - **`DriftNetwork`** — the server is on a different `networkID` than
