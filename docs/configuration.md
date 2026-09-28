@@ -202,12 +202,18 @@ NodeClass is rejected before the controller ever sees it.
 ## Drift
 
 The cloudprovider computes drift against the live Hetzner state and
-flags NodeClaims for replacement when:
+flags NodeClaims for replacement when, in this order:
 
-- the resolved image no longer matches the selector,
-- the server is attached to a different network,
-- the labels on the server diverged from the NodeClass spec,
-- or the server is on a wrong / deprecated architecture.
+- the running server's image ID differs from `NodeClaim.status.imageID`,
+- the server is not attached to the NodeClass `spec.networkID`,
+- a firewall listed in `spec.firewallIDs` is no longer applied to the server,
+- the running server type differs from the NodeClaim's instance-type label,
+- the server's location is not in `spec.locations`,
+- or a label from `spec.labels` is missing or has a different value on the server.
+
+SSH keys and user data are deliberately not checked: Hetzner does not
+expose them after server creation, so a comparison would produce false
+positives.
 
 Drift reasons are constants in
 [`pkg/cloudprovider/cloudprovider.go`](../pkg/cloudprovider/cloudprovider.go)

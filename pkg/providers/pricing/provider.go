@@ -5,6 +5,11 @@
 // type. We translate those to a single hourly "net" figure (sum of hourly
 // server price + hourly equivalent of primary IPv4) so Karpenter can
 // compare across types.
+//
+// The catalog is fetched lazily on the first Price call (so a missing or
+// invalid token doesn't block construction), refreshed on a TTL, and kept
+// across transient failures: a failed refresh serves the last known prices
+// rather than making every offering unavailable.
 package pricing
 
 import (
@@ -12,8 +17,10 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // primaryIPv4Type is Hetzner's pricing catalog key for the per-server
@@ -21,24 +28,67 @@ import (
 // billed separately from the server type.
 const primaryIPv4Type = "ipv4"
 
-// Provider fetches and caches the Hetzner Cloud pricing catalog.
+// defaultTTL is how long a fetched catalog counts as fresh. Hetzner
+// reprices rarely, so an hourly refresh is cheap insurance against
+// ordering on prices that quietly went stale.
+const defaultTTL = time.Hour
+
+// defaultRetryBackoff is how long the outcome of a failed fetch is reused
+// before the next attempt.
 //
-// The catalog is fetched lazily on the first Price call (so a missing or
-// invalid token doesn't block construction) and cached for the lifetime of
-// the Provider. The Instancetype provider constructs a new pricing.Provider
-// on reconnect, which clears the cache.
+// Price is called once per server type on every scheduling pass, so without
+// a backoff a single unreachable /pricing endpoint turns into one request
+// per server type per pass. Short enough that an outage clears itself
+// without operator action; long enough not to hammer the API.
+const defaultRetryBackoff = time.Minute
+
+// Provider fetches and caches the Hetzner Cloud pricing catalog.
 type Provider struct {
 	hcloud *hcloud.Client
 
-	once    sync.Once
-	pricing *hcloud.Pricing // nil until the first successful fetch
-	err     error           // sticky: returned by every Price call after the first failure
+	ttl          time.Duration
+	retryBackoff time.Duration
+	now          func() time.Time
+
+	mu          sync.Mutex
+	pricing     *hcloud.Pricing // nil until the first successful fetch
+	fetchedAt   time.Time
+	lastErr     error // outcome of the most recent failed fetch
+	lastAttempt time.Time
+}
+
+// Option mutates a Provider at construction time.
+type Option func(*Provider)
+
+// WithTTL overrides how long a fetched catalog stays fresh.
+func WithTTL(d time.Duration) Option {
+	return func(p *Provider) { p.ttl = d }
+}
+
+// WithRetryBackoff overrides how long a failed fetch is remembered.
+func WithRetryBackoff(d time.Duration) Option {
+	return func(p *Provider) { p.retryBackoff = d }
+}
+
+// WithClock overrides the clock used for TTL and backoff comparisons.
+// Tests advance the clock to drive expiry deterministically.
+func WithClock(now func() time.Time) Option {
+	return func(p *Provider) { p.now = now }
 }
 
 // New constructs a pricing.Provider. The catalog is fetched lazily on first
 // call to Price so an empty token does not block construction.
-func New(hcloud *hcloud.Client) *Provider {
-	return &Provider{hcloud: hcloud}
+func New(hcloud *hcloud.Client, opts ...Option) *Provider {
+	p := &Provider{
+		hcloud:       hcloud,
+		ttl:          defaultTTL,
+		retryBackoff: defaultRetryBackoff,
+		now:          time.Now,
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Price returns the hourly net price for a given server type, including the
@@ -58,16 +108,17 @@ func (p *Provider) Price(ctx context.Context, serverType *hcloud.ServerType) (fl
 	if serverType == nil {
 		return 0, fmt.Errorf("pricing.Price: serverType is nil")
 	}
-	if err := p.fetch(ctx); err != nil {
+	pricing, err := p.fetch(ctx)
+	if err != nil {
 		return 0, err
 	}
 
-	serverHourly, err := serverTypeHourly(*p.pricing, serverType.Name)
+	serverHourly, err := serverTypeHourly(*pricing, serverType.Name)
 	if err != nil {
 		return 0, fmt.Errorf("pricing.Price: lookup server type %q: %w", serverType.Name, err)
 	}
 
-	ipv4Hourly, err := ipv4PrimaryHourly(p.pricing.PrimaryIPs)
+	ipv4Hourly, err := ipv4PrimaryHourly(pricing.PrimaryIPs)
 	if err != nil {
 		// IPv4 pricing missing is unexpected — every Cloud server gets
 		// one by default and Hetzner has published pricing for it
@@ -80,24 +131,56 @@ func (p *Provider) Price(ctx context.Context, serverType *hcloud.ServerType) (fl
 	return serverHourly + ipv4Hourly, nil
 }
 
-// fetch loads the pricing catalog exactly once for the lifetime of the
-// Provider. Errors are sticky: subsequent Price calls return the same error
-// until the Provider is reconstructed (callers wire a fresh Provider into
-// the Instancetype provider on reconnect, which clears the cache).
-func (p *Provider) fetch(ctx context.Context) error {
-	p.once.Do(func() {
-		if p.hcloud == nil {
-			p.err = fmt.Errorf("pricing.fetch: hcloud client is nil")
-			return
+// fetch returns the pricing catalog, refreshing it when the cached copy has
+// aged past the TTL.
+//
+// Refresh failures never drop prices we already have: the last good catalog
+// keeps serving (with its stale timestamp) until a later attempt succeeds,
+// because an unavailable offering is worse for scheduling than a slightly
+// outdated price. When there is no catalog at all — the very first fetch
+// failed — the fetch error is returned so callers can tell "unknown price"
+// from "known price". Attempts inside the retry backoff reuse the previous
+// outcome without touching the API.
+func (p *Provider) fetch(ctx context.Context) (*hcloud.Pricing, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	now := p.now()
+	if p.pricing != nil && now.Sub(p.fetchedAt) < p.ttl {
+		return p.pricing, nil
+	}
+	if !p.lastAttempt.IsZero() && now.Sub(p.lastAttempt) < p.retryBackoff {
+		return p.pricing, p.errOrLast()
+	}
+
+	p.lastAttempt = now
+	if p.hcloud == nil {
+		p.lastErr = fmt.Errorf("pricing.fetch: hcloud client is nil")
+		return p.pricing, p.errOrLast()
+	}
+	pricing, _, err := p.hcloud.Pricing.Get(ctx)
+	if err != nil {
+		p.lastErr = fmt.Errorf("pricing.fetch: hcloud Pricing.Get: %w", err)
+		if p.pricing != nil {
+			log.FromContext(ctx).Error(p.lastErr, "refreshing Hetzner pricing catalog failed; keeping last known prices",
+				"retryAfter", p.retryBackoff.String())
+			return p.pricing, nil
 		}
-		pricing, _, err := p.hcloud.Pricing.Get(ctx)
-		if err != nil {
-			p.err = fmt.Errorf("pricing.fetch: hcloud Pricing.Get: %w", err)
-			return
-		}
-		p.pricing = &pricing
-	})
-	return p.err
+		return nil, p.lastErr
+	}
+	p.pricing = &pricing
+	p.fetchedAt = now
+	p.lastErr = nil
+	return p.pricing, nil
+}
+
+// errOrLast reports the state left by the most recent attempt: a cached
+// catalog wins (stale prices beat no prices), otherwise the fetch error.
+func (p *Provider) errOrLast() error {
+	if p.pricing != nil {
+		return nil
+	}
+	return p.lastErr
 }
 
 // serverTypeHourly returns the first per-location hourly net figure for the

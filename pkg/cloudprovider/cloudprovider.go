@@ -119,8 +119,10 @@ func (cp *CloudProvider) RepairPolicies() []karpcp.RepairPolicy {
 //  2. List Karpenter InstanceTypes for the NodeClass's allowed locations and
 //     pick the cheapest AVAILABLE offering compatible with the NodeClaim's
 //     requirements AND able to fit its requested resources.
-//  3. Resolve the snapshot that matches the chosen instance type's
-//     architecture and the NodeClass's ImageSelector.
+//  3. Resolve the snapshot for the chosen instance type's architecture:
+//     the ID the NodeClass reconciler already recorded in
+//     status.resolvedImages, falling back to a live selector lookup when
+//     status has no entry for that architecture.
 //  4. Resolve user data: Secret-backed first, inline UserData as fallback.
 //  5. Build the hcloud CreateOpts (nodeClass labels, network, firewalls, SSH
 //     keys, public IP, placement) and call instance.Provider.Create.
@@ -161,7 +163,7 @@ func (cp *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim
 		return nil, err
 	}
 
-	image, err := cp.imageProvider.Resolve(ctx, nodeClass.Spec.ImageSelector, pick.architecture)
+	image, err := cp.resolveImage(ctx, nodeClass, pick.architecture)
 	if err != nil {
 		err = fmt.Errorf("resolving image for NodeClass %q (arch=%s): %w", nodeClass.Name, pick.architecture, err)
 		cp.recordOperation(operationCreate, err)
@@ -462,11 +464,14 @@ func pickInstanceType(nodeClaim *karpv1.NodeClaim, instanceTypes []*karpcp.Insta
 }
 
 // allocatableFor returns the Karpenter InstanceType's allocatable resources
-// but tolerates a nil Overhead. The instancetype provider in this repo does
-// not currently populate InstanceType.Overhead, and the upstream
-// Allocatable() helper panics on a nil Overhead — we fall back to Capacity
-// in that case so the pick path stays usable. When Overhead is added to the
-// instancetype provider, this helper becomes a one-liner.
+// but tolerates a nil Overhead.
+//
+// Allocatable() dereferences Overhead — computeAllocatable calls
+// i.Overhead.Total(), a value receiver — so a nil Overhead panics. The
+// instancetype provider always sets a non-nil, possibly-empty Overhead, but
+// a zero Overhead and a nil Overhead mean the same thing (nothing reserved
+// outside the pod resource model), so both report Capacity here instead of
+// crashing the scheduling pass.
 func allocatableFor(it *karpcp.InstanceType) corev1.ResourceList {
 	if it == nil {
 		return corev1.ResourceList{}
@@ -717,6 +722,43 @@ func classifyInsufficientCapacity(err error) error {
 		hcloud.ErrorCodePlacementError,
 		hcloud.ErrorCodeNoSpaceLeftInLocation:
 		return fmt.Errorf("%s: %s", apiErr.Code, apiErr.Message)
+	}
+	return nil
+}
+
+// resolveImage returns the snapshot to boot for the given architecture.
+//
+// status.resolvedImages wins when it has an entry: the NodeClass reconciler
+// resolved it against the selector, verified the snapshot exists, and
+// reported the NodeClass Ready before Create was ever called, so re-listing
+// every snapshot in the project on each node launch only risks booting a
+// different image than the one that was validated. The live lookup is the
+// fallback for a NodeClass whose status carries no entry for this
+// architecture — an empty status must not fail provisioning when the
+// selector itself is fine.
+func (cp *CloudProvider) resolveImage(ctx context.Context, nodeClass *apiv1.HCloudNodeClass, arch hcloud.Architecture) (*imagefamily.ResolvedImage, error) {
+	if resolved := imageFromStatus(nodeClass, arch); resolved != nil {
+		return resolved, nil
+	}
+	return cp.imageProvider.Resolve(ctx, nodeClass.Spec.ImageSelector, arch)
+}
+
+// imageFromStatus looks up status.resolvedImages for arch and returns nil
+// when there is no usable entry (absent architecture or zero image ID).
+//
+// Only the ID is carried across: that is all hcloud's server-create request
+// needs, and the NodeClass reconciler is what guarantees the ID belongs to
+// the requested architecture in the first place.
+func imageFromStatus(nodeClass *apiv1.HCloudNodeClass, arch hcloud.Architecture) *imagefamily.ResolvedImage {
+	want := architectureLabel(arch)
+	for _, resolved := range nodeClass.Status.ResolvedImages {
+		if resolved.Architecture != want || resolved.ImageID == 0 {
+			continue
+		}
+		return &imagefamily.ResolvedImage{
+			Image:        &hcloud.Image{ID: resolved.ImageID, Architecture: arch},
+			Architecture: arch,
+		}
 	}
 	return nil
 }

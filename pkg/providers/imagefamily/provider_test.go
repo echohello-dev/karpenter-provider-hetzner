@@ -3,6 +3,7 @@ package imagefamily
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -606,5 +607,43 @@ func TestFormatLabelSelector(t *testing.T) {
 				t.Errorf("formatLabelSelector(%v) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestResolve_NoMatchIsTyped asserts callers can tell "the selector matched
+// nothing" from an API failure with errors.Is. The HCloudNodeClass
+// controller maps exactly that difference onto ImageNotFound vs
+// ImageResolutionFailed, so the distinction has to survive wrapping.
+func TestResolve_NoMatchIsTyped(t *testing.T) {
+	ts := newFakeImageServer(t)
+	ts.pageMap["1"] = fakeImagePage{
+		images: []schema.Image{
+			newImage(1, "ubuntu-22.04", hcloud.ArchitectureX86, time.Now()),
+		},
+		page: 1, lastPage: 1, total: 1,
+	}
+	p := New(newClient(t, ts))
+
+	_, err := p.Resolve(context.Background(), apiv1.ImageSelector{Family: FamilyTalos}, hcloud.ArchitectureX86)
+	if !errors.Is(err, ErrNoMatch) {
+		t.Fatalf("expected an error matching ErrNoMatch, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "no matching image") {
+		t.Errorf("expected the descriptive message to be preserved, got %v", err)
+	}
+}
+
+// TestValidateFamily covers the supported-family check both the resolver and
+// the NodeClass controller rely on.
+func TestValidateFamily(t *testing.T) {
+	for _, family := range []apiv1.ImageFamily{FamilyTalos, FamilyUbuntu} {
+		if err := ValidateFamily(family); err != nil {
+			t.Errorf("ValidateFamily(%q) = %v, want nil", family, err)
+		}
+	}
+	for _, family := range []apiv1.ImageFamily{"", "debian"} {
+		if err := ValidateFamily(family); err == nil {
+			t.Errorf("ValidateFamily(%q) = nil, want an error", family)
+		}
 	}
 }

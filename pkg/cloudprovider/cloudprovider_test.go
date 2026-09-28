@@ -521,6 +521,93 @@ func TestCreate_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCreate_UsesResolvedImageFromStatus verifies Create boots the snapshot
+// the NodeClass reconciler already resolved into status.resolvedImages
+// instead of listing the project's snapshots again. The /images handler
+// fails the test if it is ever called, so a regression to live resolution
+// is caught rather than silently passing.
+func TestCreate_UsesResolvedImageFromStatus(t *testing.T) {
+	nc := validNodeClass("default")
+	readyNodeClass(t, nc)
+	nc.Status.ResolvedImages = []apiv1.ResolvedImage{
+		{Architecture: "amd64", ImageID: 12},
+		{Architecture: "arm64", ImageID: 13},
+	}
+
+	env := newTestEnv(t, nc)
+	env.mux.HandleFunc("/server_types", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(serverTypesJSON(
+			serverTypeFixture("cx22", 2, 4, 40, "0.01", map[string]bool{"fsn1": true}),
+		))
+	})
+	env.mux.HandleFunc("/pricing", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(pricingJSON())
+	})
+	env.mux.HandleFunc("/images", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected live image lookup (%s): status.resolvedImages should have been used", r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images":[]}`))
+	})
+	setupHcloudBackend(t, env)
+
+	cp := newCloudProvider(env)
+	claim := newNodeClaim("nc-img", "default", []karpv1.NodeSelectorRequirementWithMinValues{
+		karpv1.NodeSelectorRequirementWithMinValues{Key: corev1.LabelTopologyZone, Operator: corev1.NodeSelectorOpIn, Values: []string{"fsn1"}},
+	}, nil)
+
+	hydrated, err := cp.Create(context.Background(), claim)
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if got := hydrated.Status.ImageID; got != "12" {
+		t.Fatalf("ImageID = %q, want 12 (from status.resolvedImages)", got)
+	}
+}
+
+// TestCreate_FallsBackToLiveImageLookup covers the complement: when status
+// has no entry for the architecture being provisioned (here an amd64 pick
+// with only an arm64 entry recorded), Create must resolve the snapshot from
+// the ImageSelector rather than booting nothing.
+func TestCreate_FallsBackToLiveImageLookup(t *testing.T) {
+	nc := validNodeClass("default")
+	readyNodeClass(t, nc)
+	nc.Status.ResolvedImages = []apiv1.ResolvedImage{
+		{Architecture: "arm64", ImageID: 13},
+	}
+
+	env := newTestEnv(t, nc)
+	env.mux.HandleFunc("/server_types", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(serverTypesJSON(
+			serverTypeFixture("cx22", 2, 4, 40, "0.01", map[string]bool{"fsn1": true}),
+		))
+	})
+	env.mux.HandleFunc("/pricing", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(pricingJSON())
+	})
+	env.mux.HandleFunc("/images", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images":[{"id":12,"status":"available","type":"snapshot","description":"talos","architecture":"x86"}]}`))
+	})
+	setupHcloudBackend(t, env)
+
+	cp := newCloudProvider(env)
+	claim := newNodeClaim("nc-fb", "default", []karpv1.NodeSelectorRequirementWithMinValues{
+		karpv1.NodeSelectorRequirementWithMinValues{Key: corev1.LabelTopologyZone, Operator: corev1.NodeSelectorOpIn, Values: []string{"fsn1"}},
+	}, nil)
+
+	hydrated, err := cp.Create(context.Background(), claim)
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if got := hydrated.Status.ImageID; got != "12" {
+		t.Fatalf("ImageID = %q, want 12 (resolved live)", got)
+	}
+}
+
 // TestCreate_PicksCheapest ensures the price-ordered selection picks the
 // cheapest available type when both fit the requested resources.
 func TestCreate_PicksCheapest(t *testing.T) {

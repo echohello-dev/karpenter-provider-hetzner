@@ -6,6 +6,7 @@ package imagefamily
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -42,6 +43,27 @@ const (
 	FamilyUbuntu apiv1.ImageFamily = "ubuntu"
 )
 
+// ErrNoMatch is returned by Resolve when the API answered but no image
+// satisfies the selector. Callers use errors.Is to tell "nothing matches"
+// (a spec problem worth reporting as such) from an API failure.
+var ErrNoMatch = errors.New("no matching image")
+
+// ValidateFamily reports whether family is one of the supported OS families.
+// It is the single source of truth for the supported set: Resolve uses it
+// internally, and the HCloudNodeClass controller uses it to surface an
+// ImageSelectorInvalid condition before doing any API work.
+func ValidateFamily(family apiv1.ImageFamily) error {
+	if family == "" {
+		return errors.New("ImageSelector.Family is required")
+	}
+	switch family {
+	case FamilyTalos, FamilyUbuntu:
+		return nil
+	default:
+		return fmt.Errorf("unsupported family %q (want %q or %q)", family, FamilyTalos, FamilyUbuntu)
+	}
+}
+
 // Resolve lists available images matching the ImageSelector for the given
 // target architecture and returns the newest match.
 //
@@ -63,6 +85,10 @@ const (
 // (identical Created) are broken by descending image ID. Both fields are
 // monotonically non-decreasing on the Hetzner side, so the order is
 // deterministic across runs.
+//
+// Returns an error wrapping ErrNoMatch when the API answered but nothing
+// satisfies the selector, so callers can separate "spec matches no image"
+// from an API failure.
 func (p *Provider) Resolve(ctx context.Context, sel apiv1.ImageSelector, arch hcloud.Architecture) (*ResolvedImage, error) {
 	family, err := normalizeFamily(sel.Family)
 	if err != nil {
@@ -95,7 +121,7 @@ func (p *Provider) Resolve(ctx context.Context, sel apiv1.ImageSelector, arch hc
 	}
 
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("imagefamily.Resolve: no matching image for family=%s arch=%s version=%q selector=%v", sel.Family, arch, sel.Version, sel.Selector)
+		return nil, fmt.Errorf("imagefamily.Resolve: %w for family=%s arch=%s version=%q selector=%v", ErrNoMatch, sel.Family, arch, sel.Version, sel.Selector)
 	}
 
 	sortImageSelection(matches)
@@ -153,18 +179,12 @@ func sortImageSelection(images []*hcloud.Image) {
 	})
 }
 
-// normalizeFamily validates the family and returns the lowercased substring
-// used for description matching.
+// normalizeFamily lowercases a validated family for description matching.
 func normalizeFamily(family apiv1.ImageFamily) (string, error) {
-	if family == "" {
-		return "", fmt.Errorf("imagefamily.Resolve: ImageSelector.Family is required")
+	if err := ValidateFamily(family); err != nil {
+		return "", fmt.Errorf("imagefamily.Resolve: %w", err)
 	}
-	switch family {
-	case FamilyTalos, FamilyUbuntu:
-		return strings.ToLower(string(family)), nil
-	default:
-		return "", fmt.Errorf("imagefamily.Resolve: unsupported family %q (want %q or %q)", family, FamilyTalos, FamilyUbuntu)
-	}
+	return strings.ToLower(string(family)), nil
 }
 
 // validateArchitecture rejects empty and unsupported architectures. The
