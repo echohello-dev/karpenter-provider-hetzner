@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -121,7 +122,10 @@ func readyNodeClass(t *testing.T, nc *apiv1.HCloudNodeClass) {
 // hcloudServerForTest builds a *hcloud.Server with the supplied identity and
 // optional attachments. Tests use this to construct the "already-exists"
 // scenarios for Get / List / Drift paths. Always x86 — the tests that need
-// a different architecture can extend this helper.
+// a different architecture can extend this helper. Attaches a primary
+// public IPv4 and IPv6 by default (the provider's create defaults enable
+// both); tests exercising missing-address scenarios can zero the
+// PublicNet fields on the returned server.
 func hcloudServerForTest(id int64, name string, stName string, location string, networkID int64, firewallIDs []int64, imageID int64, labels map[string]string) *hcloud.Server {
 	srv := &hcloud.Server{
 		ID:     id,
@@ -138,6 +142,9 @@ func hcloudServerForTest(id int64, name string, stName string, location string, 
 		Image:    &hcloud.Image{ID: imageID, Architecture: hcloud.ArchitectureX86},
 		Labels:   labels,
 	}
+	srv.PublicNet.IPv4 = hcloud.ServerPublicNetIPv4{IP: net.ParseIP("203.0.113.10")}
+	ipv6, ipv6Net, _ := net.ParseCIDR("2001:db8:1::/64")
+	srv.PublicNet.IPv6 = hcloud.ServerPublicNetIPv6{IP: ipv6, Network: ipv6Net}
 	if networkID != 0 {
 		srv.PrivateNet = []hcloud.ServerPrivateNet{{Network: &hcloud.Network{ID: networkID}}}
 	}
@@ -181,6 +188,19 @@ func serverToSchema(srv *hcloud.Server) hcloudschema.Server {
 	}
 	if srv.Image != nil {
 		out.Image = &hcloudschema.Image{ID: srv.Image.ID, Architecture: string(srv.Image.Architecture)}
+	}
+	// hcloud's server schema encodes the primary IPv4 as a plain address and
+	// the primary IPv6 as a CIDR (its /64 network); keep that shape so the
+	// httptest round-trip lands back on the same fields.
+	if srv.PublicNet.IPv4.IP != nil {
+		out.PublicNet.IPv4 = hcloudschema.ServerPublicNetIPv4{IP: srv.PublicNet.IPv4.IP.String()}
+	}
+	if srv.PublicNet.IPv6.IP != nil {
+		ipv6 := srv.PublicNet.IPv6.IP.String() + "/64"
+		if srv.PublicNet.IPv6.Network != nil {
+			ipv6 = srv.PublicNet.IPv6.Network.String()
+		}
+		out.PublicNet.IPv6 = hcloudschema.ServerPublicNetIPv6{IP: ipv6}
 	}
 	for _, pn := range srv.PrivateNet {
 		if pn.Network != nil {
@@ -1228,10 +1248,16 @@ func TestIsDrifted_LabelsDrift(t *testing.T) {
 }
 
 // TestIsDrifted_NoDrift confirms a server whose attributes all match
-// returns an empty drift reason.
+// returns an empty drift reason. Includes a matching status.resolvedImages
+// entry so the image-selector check is exercised in its "consistent" state,
+// and the fixture's default primary IPv4/IPv6 satisfy the enabled
+// public-IP checks.
 func TestIsDrifted_NoDrift(t *testing.T) {
 	nc := validNodeClass("default")
 	nc.Spec.Labels = map[string]string{"workload": "gpu"}
+	nc.Status.ResolvedImages = []apiv1.ResolvedImage{
+		{Architecture: "amd64", ImageID: 12},
+	}
 	env := newTestEnv(t, nc)
 	env.mux.HandleFunc("/servers/18", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1244,6 +1270,7 @@ func TestIsDrifted_NoDrift(t *testing.T) {
 	claim := newNodeClaim("nc-ok", "default", nil, nil)
 	claim.Status.ProviderID = instance.FormatProviderID(18)
 	claim.Status.ImageID = "12"
+	claim.Labels[corev1.LabelArchStable] = "amd64"
 	claim.Labels[corev1.LabelInstanceTypeStable] = "cx22"
 	reason, err := cp.IsDrifted(context.Background(), claim)
 	if err != nil {
@@ -1251,6 +1278,182 @@ func TestIsDrifted_NoDrift(t *testing.T) {
 	}
 	if reason != "" {
 		t.Fatalf("expected no drift, got %q", reason)
+	}
+}
+
+// TestIsDrifted_ImageSelectorDrift verifies the image-selector check fires
+// when the NodeClass's status.resolvedImages entry for the NodeClaim's
+// architecture no longer matches the image the NodeClaim booted — the
+// mechanism that replaces running nodes when spec.imageSelector is edited.
+// The server still runs the original snapshot, so the out-of-band image
+// check must not fire first.
+func TestIsDrifted_ImageSelectorDrift(t *testing.T) {
+	nc := validNodeClass("default")
+	nc.Status.ResolvedImages = []apiv1.ResolvedImage{
+		{Architecture: "amd64", ImageID: 99}, // selector now resolves elsewhere
+	}
+	env := newTestEnv(t, nc)
+	env.mux.HandleFunc("/servers/19", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(hcloudServerJSON(t, hcloudServerForTest(19, "k8", "cx22", "fsn1", 12345, []int64{9001}, 12, map[string]string{"karpenter.sh/cluster": "cluster-a"})))
+	})
+	cp := newCloudProvider(env)
+	claim := newNodeClaim("nc-is", "default", nil, nil)
+	claim.Status.ProviderID = instance.FormatProviderID(19)
+	claim.Status.ImageID = "12"
+	claim.Labels[corev1.LabelArchStable] = "amd64"
+	reason, err := cp.IsDrifted(context.Background(), claim)
+	if err != nil {
+		t.Fatalf("IsDrifted: %v", err)
+	}
+	if reason != DriftImageSelector {
+		t.Fatalf("expected %q, got %q", DriftImageSelector, reason)
+	}
+}
+
+// TestIsDrifted_ImageSelectorDriftSkippedWhenStatusUnusable ensures the
+// image-selector check never fires off an empty or unusable NodeClass
+// status: no resolved images at all, no entry for the NodeClaim's
+// architecture, or an entry with a zero image ID. An empty status must
+// never churn nodes.
+func TestIsDrifted_ImageSelectorDriftSkippedWhenStatusUnusable(t *testing.T) {
+	cases := []struct {
+		name   string
+		images []apiv1.ResolvedImage
+	}{
+		{"no status", nil},
+		{"wrong architecture", []apiv1.ResolvedImage{{Architecture: "arm64", ImageID: 99}}},
+		{"zero image id", []apiv1.ResolvedImage{{Architecture: "amd64", ImageID: 0}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nc := validNodeClass("default")
+			nc.Status.ResolvedImages = tc.images
+			env := newTestEnv(t, nc)
+			env.mux.HandleFunc("/servers/20", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(hcloudServerJSON(t, hcloudServerForTest(20, "k9", "cx22", "fsn1", 12345, []int64{9001}, 12, map[string]string{"karpenter.sh/cluster": "cluster-a"})))
+			})
+			cp := newCloudProvider(env)
+			claim := newNodeClaim("nc-isd", "default", nil, nil)
+			claim.Status.ProviderID = instance.FormatProviderID(20)
+			claim.Status.ImageID = "12"
+			claim.Labels[corev1.LabelArchStable] = "amd64"
+			claim.Labels[corev1.LabelInstanceTypeStable] = "cx22"
+			reason, err := cp.IsDrifted(context.Background(), claim)
+			if err != nil {
+				t.Fatalf("IsDrifted: %v", err)
+			}
+			if reason != "" {
+				t.Fatalf("expected no drift with unusable status, got %q", reason)
+			}
+		})
+	}
+}
+
+// TestIsDrifted_PublicIPv4DriftWhenDisabledButAttached verifies the public
+// IPv4 check fires when the NodeClass disables public IPv4 while the server
+// still carries the billed primary address.
+func TestIsDrifted_PublicIPv4DriftWhenDisabledButAttached(t *testing.T) {
+	nc := validNodeClass("default")
+	enabled := false
+	nc.Spec.EnablePublicIPv4 = &enabled
+	env := newTestEnv(t, nc)
+	env.mux.HandleFunc("/servers/21", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// hcloudServerForTest attaches a primary public IPv4 by default.
+		_, _ = w.Write(hcloudServerJSON(t, hcloudServerForTest(21, "k10", "cx22", "fsn1", 12345, []int64{9001}, 12, map[string]string{"karpenter.sh/cluster": "cluster-a"})))
+	})
+	cp := newCloudProvider(env)
+	claim := newNodeClaim("nc-v4", "default", nil, nil)
+	claim.Status.ProviderID = instance.FormatProviderID(21)
+	claim.Status.ImageID = "12"
+	claim.Labels[corev1.LabelInstanceTypeStable] = "cx22"
+	reason, err := cp.IsDrifted(context.Background(), claim)
+	if err != nil {
+		t.Fatalf("IsDrifted: %v", err)
+	}
+	if reason != DriftPublicIPv4 {
+		t.Fatalf("expected %q, got %q", DriftPublicIPv4, reason)
+	}
+}
+
+// TestIsDrifted_PublicIPv4DriftWhenMissing covers the reverse mismatch: the
+// NodeClass wants a public IPv4 (the default) but the server has none.
+func TestIsDrifted_PublicIPv4DriftWhenMissing(t *testing.T) {
+	nc := validNodeClass("default")
+	env := newTestEnv(t, nc)
+	env.mux.HandleFunc("/servers/22", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		srv := hcloudServerForTest(22, "k11", "cx22", "fsn1", 12345, []int64{9001}, 12, map[string]string{"karpenter.sh/cluster": "cluster-a"})
+		srv.PublicNet.IPv4 = hcloud.ServerPublicNetIPv4{} // no primary IPv4
+		_, _ = w.Write(hcloudServerJSON(t, srv))
+	})
+	cp := newCloudProvider(env)
+	claim := newNodeClaim("nc-v4m", "default", nil, nil)
+	claim.Status.ProviderID = instance.FormatProviderID(22)
+	claim.Status.ImageID = "12"
+	claim.Labels[corev1.LabelInstanceTypeStable] = "cx22"
+	reason, err := cp.IsDrifted(context.Background(), claim)
+	if err != nil {
+		t.Fatalf("IsDrifted: %v", err)
+	}
+	if reason != DriftPublicIPv4 {
+		t.Fatalf("expected %q, got %q", DriftPublicIPv4, reason)
+	}
+}
+
+// TestIsDrifted_PublicIPv4ConsistentWhenDisabled confirms a private-network
+// cluster (enablePublicIPv4=false) with a server that genuinely has no
+// primary IPv4 reports no drift.
+func TestIsDrifted_PublicIPv4ConsistentWhenDisabled(t *testing.T) {
+	nc := validNodeClass("default")
+	enabled := false
+	nc.Spec.EnablePublicIPv4 = &enabled
+	env := newTestEnv(t, nc)
+	env.mux.HandleFunc("/servers/23", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		srv := hcloudServerForTest(23, "k12", "cx22", "fsn1", 12345, []int64{9001}, 12, map[string]string{"karpenter.sh/cluster": "cluster-a"})
+		srv.PublicNet.IPv4 = hcloud.ServerPublicNetIPv4{} // no primary IPv4
+		_, _ = w.Write(hcloudServerJSON(t, srv))
+	})
+	cp := newCloudProvider(env)
+	claim := newNodeClaim("nc-v4c", "default", nil, nil)
+	claim.Status.ProviderID = instance.FormatProviderID(23)
+	claim.Status.ImageID = "12"
+	claim.Labels[corev1.LabelInstanceTypeStable] = "cx22"
+	reason, err := cp.IsDrifted(context.Background(), claim)
+	if err != nil {
+		t.Fatalf("IsDrifted: %v", err)
+	}
+	if reason != "" {
+		t.Fatalf("expected no drift, got %q", reason)
+	}
+}
+
+// TestIsDrifted_PublicIPv6DriftWhenDisabledButAttached is the IPv6 twin of
+// the public IPv4 check.
+func TestIsDrifted_PublicIPv6DriftWhenDisabledButAttached(t *testing.T) {
+	nc := validNodeClass("default")
+	enabled := false
+	nc.Spec.EnablePublicIPv6 = &enabled
+	env := newTestEnv(t, nc)
+	env.mux.HandleFunc("/servers/24", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// hcloudServerForTest attaches a primary public IPv6 by default.
+		_, _ = w.Write(hcloudServerJSON(t, hcloudServerForTest(24, "k13", "cx22", "fsn1", 12345, []int64{9001}, 12, map[string]string{"karpenter.sh/cluster": "cluster-a"})))
+	})
+	cp := newCloudProvider(env)
+	claim := newNodeClaim("nc-v6", "default", nil, nil)
+	claim.Status.ProviderID = instance.FormatProviderID(24)
+	claim.Status.ImageID = "12"
+	claim.Labels[corev1.LabelInstanceTypeStable] = "cx22"
+	reason, err := cp.IsDrifted(context.Background(), claim)
+	if err != nil {
+		t.Fatalf("IsDrifted: %v", err)
+	}
+	if reason != DriftPublicIPv6 {
+		t.Fatalf("expected %q, got %q", DriftPublicIPv6, reason)
 	}
 }
 

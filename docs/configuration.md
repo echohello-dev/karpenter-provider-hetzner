@@ -205,11 +205,24 @@ The cloudprovider computes drift against the live Hetzner state and
 flags NodeClaims for replacement when, in this order:
 
 - the running server's image ID differs from `NodeClaim.status.imageID`,
+- the NodeClaim's image differs from the image the NodeClass
+  `spec.imageSelector` currently resolves to for that architecture
+  (`status.resolvedImages`) — this is what replaces running nodes when
+  `imageSelector` is edited,
 - the server is not attached to the NodeClass `spec.networkID`,
 - a firewall listed in `spec.firewallIDs` is no longer applied to the server,
+- the server's primary public IPv4 does not match `spec.enablePublicIPv4`
+  (and the IPv6 equivalent, `spec.enablePublicIPv6`) in either direction,
 - the running server type differs from the NodeClaim's instance-type label,
 - the server's location is not in `spec.locations`,
 - or a label from `spec.labels` is missing or has a different value on the server.
+
+Editing `spec.imageSelector` therefore churns running nodes by design —
+only future nodes would pick up the new snapshot otherwise. The
+image-selector check reads `status.resolvedImages` only: when the status
+has no entry for a NodeClaim's architecture (or the entry has a zero
+image ID) the check is skipped, so an unresolved NodeClass never
+replaces nodes.
 
 SSH keys and user data are deliberately not checked: Hetzner does not
 expose them after server creation, so a comparison would produce false
@@ -217,4 +230,4 @@ positives.
 
 Drift reasons are constants in
 [`pkg/cloudprovider/cloudprovider.go`](../pkg/cloudprovider/cloudprovider.go)
-(`DriftImage`, `DriftNetwork`, ...).
+(`DriftImage`, `DriftImageSelector`, `DriftNetwork`, ...).

@@ -212,8 +212,20 @@ hcloud server list -o columns=id,name,labels
   hcloud server describe <name>
   ```
 
+- **`DriftImageSelector`** — the NodeClass's `spec.imageSelector` no
+  longer resolves to the snapshot the NodeClaim booted (see
+  `status.resolvedImages` on the NodeClass). Editing `imageSelector`
+  deliberately replaces running nodes — that churn is the feature. The
+  check is skipped while `status.resolvedImages` has no entry for the
+  node's architecture, so an unresolved NodeClass never triggers it.
+
 - **`DriftNetwork`** — the server is on a different `networkID` than
   the NodeClass. Check `hcloud server describe <id>`.
+
+- **`DriftPublicIPv4`** — the server's primary IPv4 attachment disagrees
+  with `spec.enablePublicIPv4` in either direction: a billed IPv4 is
+  still attached after `enablePublicIPv4: false`, or the server has none
+  after `true`. `DriftPublicIPv6` is the IPv6 equivalent.
 
 - **`DriftLabels`** — server labels drifted from the NodeClass spec.
   This is almost always a manual `hcloud server update` or a second
@@ -238,9 +250,12 @@ kubectl patch hcloudnodeclass default --type=merge \
   -p '{"spec":{"enablePublicIPv4":false}}'
 ```
 
-Existing servers keep their public IPv4 until they're replaced — Karpenter
-drift fires on the field change, and the new server comes up without
-the address.
+Existing servers keep their public IPv4 until they're replaced. Flipping
+the field fires `DriftPublicIPv4` (the server still has a primary IPv4
+while the NodeClass says it should not — the reverse mismatch fires the
+same reason), and Karpenter replaces the node; the new server comes up
+without the address. Expect node churn: every managed node is recycled
+when `enablePublicIPv4` changes.
 
 ## Logs and metrics
 
