@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1274,9 +1275,26 @@ func TestBuildServerLabels_HasNodeClassAndStandardLabels(t *testing.T) {
 	if got[corev1.LabelTopologyZone] != "fsn1" {
 		t.Errorf("zone label not propagated: %v", got)
 	}
-	wantKey := karpv1.NodeClassLabelKey(schema.GroupKind{Group: apiv1.GroupVersion.Group, Kind: "HCloudNodeClass"})
-	if got[wantKey] != "default" {
-		t.Errorf("NodeClass label = %v, want key %q with value default", got, wantKey)
+	if got[hcloudNodeClassLabelKey] != "default" {
+		t.Errorf("NodeClass label = %v, want key %q with value default", got, hcloudNodeClassLabelKey)
+	}
+	if got[hcloudServerFamilyLabelKey] != "" {
+		t.Errorf("unexpected server-family label without claim value: %v", got)
+	}
+	claim.Labels[instancetype.LabelServerFamily] = "cx"
+	got = buildServerLabels(claim, nc)
+	if got[hcloudServerFamilyLabelKey] != "cx" {
+		t.Errorf("server-family label = %v, want key %q with value cx", got, hcloudServerFamilyLabelKey)
+	}
+	if got[instancetype.LabelServerFamily] != "" {
+		t.Errorf("canonical server-family key leaked to hcloud labels: %v", got)
+	}
+	// The live API rejects any key containing "hetzner.cloud" (reserved
+	// prefix), so the boundary must never emit one.
+	for key := range got {
+		if strings.Contains(key, "hetzner.cloud") {
+			t.Errorf("label key %q uses the reserved hetzner.cloud namespace", key)
+		}
 	}
 }
 

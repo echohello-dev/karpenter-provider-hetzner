@@ -5,6 +5,7 @@
 | [`install.md`](install.md) | Prerequisites, Helm install, post-install verification |
 | [`configuration.md`](configuration.md) | `HCloudNodeClass` spec reference (every field) |
 | [`troubleshooting.md`](troubleshooting.md) | Common failures, debug recipes, log/event queries |
+| [`testing.md`](testing.md) | Test layers (unit / e2e / live smoke), envtest setup, live-run knobs |
 | [`talos-bootstrap.md`](talos-bootstrap.md) | Bootstrapping Talos workers (machineconfig + Secret) |
 | [`ubuntu-bootstrap.md`](ubuntu-bootstrap.md) | Bootstrapping Ubuntu workers (cloud-init + kubeadm join) |
 | [`usage.md`](usage.md) | One-page summary, links to the above |
