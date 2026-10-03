@@ -15,6 +15,7 @@ See `mise.toml` for defined tasks. The standard tasks for this provider are:
 |---|---|
 | Build                      | `mise run build`    |
 | Unit tests                 | `mise run test`     |
+| End-to-end tests           | `mise run e2e`      |
 | Lint                       | `mise run lint`     |
 | Vet                        | `mise run vet`      |
 | Generate CRDs              | `mise run generate` |

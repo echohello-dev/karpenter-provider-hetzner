@@ -45,6 +45,30 @@ HCLOUD_TOKEN="$HCLOUD_TOKEN" \
 kubectl apply -f examples/talos-nodeclass.yaml
 ```
 
+## Testing
+
+Unit tests run against an httptest-backed Hetzner Cloud fake and the controller-runtime fake client:
+
+```bash
+mise run test
+```
+
+The end-to-end suite (`test/e2e`) lifts that fake into a multi-step scenario harness and drives the real reconciler and CloudProvider against a real kube-apiserver (controller-runtime envtest) with the CRDs from `charts/karpenter-provider-hetzner/crds`:
+
+```bash
+mise run e2e
+```
+
+It covers the full local story — `HCloudNodeClass` reconcile → `Ready=True` with `status.resolvedImages` populated, then `CloudProvider.Create → Get → IsDrifted → Delete` asserting labels, ProviderID, and capacity/allocatable. No Hetzner account or Kubernetes cluster is required. The first run downloads the envtest binaries (`kube-apiserver`, `etcd`) through `setup-envtest`; `mise run envtest-setup` does that download standalone. Without those binaries (or `KUBEBUILDER_ASSETS`) the suite skips cleanly, so `mise run test` and `mise run ci` stay green on machines that never run it.
+
+An opt-in smoke test also runs the same round-trip against the **live Hetzner Cloud API**, creating and deleting one real billed server (IPv6-only, default `cx22` in `fsn1`):
+
+```bash
+E2E=1 HCLOUD_TOKEN=... mise run e2e
+```
+
+Optional knobs: `E2E_SERVER_TYPE` (default `cx22`), `E2E_LOCATION` (default `fsn1`), `E2E_CLUSTER_NAME` (default `karpenter-e2e`). It only runs when both `E2E=1` and `HCLOUD_TOKEN` are set, and clean-up runs even when assertions fail.
+
 ## Naming
 
 | | |
