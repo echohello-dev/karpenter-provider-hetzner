@@ -501,7 +501,9 @@ func pickPlacementStrategy(s apiv1.PlacementGroupStrategy) instance.PlacementGro
 
 // buildServerLabels composes the labels applied to the hcloud server.
 // Provider-owned labels (NodeClass, cluster, NodeClaim, NodePool) are added
-// here so the round-trip hydration path can use them.
+// here so the round-trip hydration path can use them. The final map uses the
+// Hetzner-safe keys (see toHcloudLabelKey) because the API rejects reserved
+// "hetzner.cloud" keys.
 func buildServerLabels(nodeClaim *karpv1.NodeClaim, nodeClass *apiv1.HCloudNodeClass, picks ...*pick) map[string]string {
 	var selected *pick
 	if len(picks) > 0 {
@@ -530,7 +532,12 @@ func buildServerLabels(nodeClaim *karpv1.NodeClaim, nodeClass *apiv1.HCloudNodeC
 		labels[karpv1.NodePoolLabelKey] = value
 	}
 	labels[karpv1.NodeClassLabelKey(nodeClassGroupKind())] = nodeClass.Name
-	return labels
+
+	out := make(map[string]string, len(labels))
+	for key, value := range labels {
+		out[toHcloudLabelKey(key)] = value
+	}
+	return out
 }
 
 func resolvedLabels(selected *pick) map[string]string {
@@ -561,6 +568,37 @@ func resolvedLabels(selected *pick) map[string]string {
 // helper without consulting the runtime object.
 func nodeClassGroupKind() schema.GroupKind {
 	return schema.GroupKind{Group: apiv1.GroupVersion.Group, Kind: "HCloudNodeClass"}
+}
+
+// Hetzner-safe server-label keys. The Hetzner Cloud API reserves every
+// server-label key containing "hetzner.cloud" (it rejects the whole create
+// with "The hetzner.cloud/ prefix is reserved and cannot be used"), so the
+// two canonical keys derived from that namespace cannot be sent verbatim.
+// The boundary renames them onto karpenter.sh/* equivalents on the way out
+// and back on the way in; NodeClaim-side labels keep the canonical keys so
+// NodePool requirements and Karpenter's standard NodeClass label are
+// unaffected.
+const (
+	hcloudNodeClassLabelKey    = "karpenter.sh/hcloudnodeclass"
+	hcloudServerFamilyLabelKey = "karpenter.sh/server-family"
+)
+
+// hetznerLabelKeys maps canonical Kubernetes-side label keys onto their
+// Hetzner-safe forms.
+var hetznerLabelKeys = map[string]string{
+	karpv1.NodeClassLabelKey(nodeClassGroupKind()): hcloudNodeClassLabelKey,
+	instancetype.LabelServerFamily:                 hcloudServerFamilyLabelKey,
+}
+
+// toHcloudLabelKey maps a canonical label key onto the key actually written
+// to hcloud server labels. Keys outside the reserved namespace pass through.
+// serverToNodeClaim reads the server-side keys back through the same mapping
+// and reports the canonical keys on the NodeClaim.
+func toHcloudLabelKey(key string) string {
+	if renamed, ok := hetznerLabelKeys[key]; ok {
+		return renamed
+	}
+	return key
 }
 
 // hydrateNodeClaim populates the standard Karpenter-expected NodeClaim fields
@@ -634,7 +672,7 @@ func serverToNodeClaim(server *hcloud.Server) *karpv1.NodeClaim {
 		karpv1.CapacityTypeLabelKey,
 		instancetype.LabelServerFamily,
 	} {
-		if value := server.Labels[key]; value != "" {
+		if value := server.Labels[toHcloudLabelKey(key)]; value != "" {
 			out.Labels[key] = value
 		}
 	}

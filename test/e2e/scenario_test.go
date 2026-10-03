@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/awslabs/operatorpkg/status"
@@ -111,11 +112,19 @@ func TestE2E_NodeClassAndNodeLifecycle(t *testing.T) {
 		"karpenter.sh/cluster":         clusterName,
 		"karpenter.sh/nodeclaim":       "e2e-claim",
 		"karpenter.sh/nodepool":        "pool-a",
+		"karpenter.sh/hcloudnodeclass": "e2e",
 		"team":                         "platform",
 		corev1.LabelInstanceTypeStable: "cx22",
 	} {
 		if got := srv.Labels[key]; got != want {
 			t.Errorf("server %s, want %q", fmtLabel(srv.Labels, key), want)
+		}
+	}
+	// Regression guard: the live API rejects any server-label key containing
+	// "hetzner.cloud" (reserved prefix), so none may ever be emitted.
+	for key := range srv.Labels {
+		if strings.Contains(key, "hetzner.cloud") {
+			t.Errorf("server label key %q uses the reserved hetzner.cloud namespace", key)
 		}
 	}
 	if srv.UserData != "#!e2e-scenario" {

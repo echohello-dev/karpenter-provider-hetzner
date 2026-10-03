@@ -445,6 +445,19 @@ func (b *Backend) handleServerCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_input", err.Error())
 		return
 	}
+	if req.Labels != nil {
+		if err := validateServerLabels(*req.Labels); err != nil {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(schema.ErrorResponse{
+				Error: schema.Error{
+					Code:       "invalid_input",
+					Message:    "invalid input in field 'labels'",
+					DetailsRaw: json.RawMessage(`{"fields":[{"name":"labels","messages":[` + strconv.Quote(err.Error()) + `]}]}`),
+				},
+			})
+			return
+		}
+	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -562,6 +575,25 @@ func (b *Backend) handleServerDelete(w http.ResponseWriter, r *http.Request) {
 
 func paginationMeta(n int) schema.Meta {
 	return schema.Meta{Pagination: &schema.MetaPagination{Page: 1, LastPage: 1, PerPage: n, TotalEntries: n}}
+}
+
+// validateServerLabels mirrors the live API's server-label rules: keys must
+// be well-formed and none may use the reserved "hetzner.cloud" namespace —
+// the real API rejects the whole create with "The hetzner.cloud/ prefix is
+// reserved and cannot be used". Keeping the fake faithful here lets the e2e
+// suite catch reserved-namespace regressions without a live account.
+func validateServerLabels(labels map[string]string) error {
+	anyLabels := make(map[string]any, len(labels))
+	for key, value := range labels {
+		if strings.Contains(key, "hetzner.cloud") {
+			return fmt.Errorf("the hetzner.cloud/ prefix is reserved and cannot be used")
+		}
+		anyLabels[key] = value
+	}
+	if _, err := hcloud.ValidateResourceLabels(anyLabels); err != nil {
+		return err
+	}
+	return nil
 }
 
 // matchLabelSelector evaluates a comma-separated key=value selector with AND
