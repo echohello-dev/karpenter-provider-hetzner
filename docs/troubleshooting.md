@@ -71,18 +71,32 @@ under `type=ImagesReady`.
 
 ### `status.resolvedImages` is empty
 
-The selector resolved to zero snapshots. Verify:
+The selector resolved to zero snapshots. The provider never matches
+images by `karpenter.sh/cluster` — that label is only ever applied to
+servers — so reproduce the query it actually runs: list available
+snapshots for the target architecture, narrowed by
+`spec.imageSelector.selector` when one is set, then look for a
+description containing the family (`talos`/`ubuntu`) and, if
+`spec.imageSelector.version` is set, that version substring.
 
 ```bash
-# What does the hcloud API see?
-hcloud image list \
-  -l karpenter.sh/cluster=$CLUSTER_NAME \
+# Candidates the provider sees (arch + type filters, as the API query sends):
+hcloud image list -a x86 -t snapshot \
+  -o columns=id,description,architecture,status,type
+
+# With an imageSelector.selector, e.g. {caph-image-name: talos-v1.9.5-gvisor}:
+hcloud image list -a x86 -t snapshot \
+  -l caph-image-name=talos-v1.9.5-gvisor \
   -o columns=id,description,architecture,status,type
 
 # Or via curl with the same query the provider sends:
 curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
   "https://api.hetzner.cloud/v1/images?architecture=x86&type=snapshot&status=available&label_selector=caph-image-name=talos-v1.9.5-gvisor"
 ```
+
+Check that the description of a returned snapshot actually contains the
+family and version substrings — that match is done client-side and the
+CLI cannot filter on it.
 
 Common causes:
 
