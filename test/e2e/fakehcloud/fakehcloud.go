@@ -35,6 +35,7 @@ type Image struct {
 	Type         string // "snapshot" or "system"
 	Labels       map[string]string
 	Created      time.Time
+	DiskSizeGB   float32 // captured disk size; the live API refuses boots where it exceeds the server type's disk
 }
 
 // ServerType is a catalog entry for GET /server_types and the pricing
@@ -277,6 +278,7 @@ func (b *Backend) handleImages(w http.ResponseWriter, r *http.Request) {
 			Status:       "available",
 			Architecture: img.Architecture,
 			Created:      &created,
+			DiskSize:     img.DiskSizeGB,
 			Labels:       img.Labels,
 		})
 	}
