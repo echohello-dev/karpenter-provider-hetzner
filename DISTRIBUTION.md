@@ -2,8 +2,26 @@
 
 ## Tagging
 
-Releases follow [Semantic Versioning](https://semver.org/). Each tag is a
-full version (e.g. `v0.1.0`, not `0.1`).
+Releases follow [Calendar Versioning](https://calver.org/) in the
+`YYYY.M.patch` shape: major is the year, minor is the month (unpadded —
+SemVer numeric identifiers may not carry a leading zero), and patch
+increments within the month.
+
+[release-please](https://github.com/googleapis/release-please) cuts each
+release from the conventional commits on `main` and pushes a
+`v`-prefixed tag, so the current release is tagged `v2026.9.2` — `v`
+plus the full bare version that `.release-please-manifest.json` and
+`CHANGELOG.md` record (`2026.9.2`; a matching unprefixed alias tag is
+sometimes added by hand). Conventional-commit bumps map onto the scheme:
+
+- `fix:` → `YYYY.M.<patch+1>`, e.g. `v2026.9.1` → `v2026.9.2`
+- `feat:` → `YYYY.<month+1>.0`, e.g. `v2026.9.2` → `v2026.10.0`
+- `feat!:` → `<year+1>.0.0`; crossing into January needs a manual
+  `Release-As:` trailer, since SemVer has no month or year rollover.
+
+Historical `v0.1.x` tags predate the switch to CalVer. Container image
+tags mirror the release tag (`karpenter-provider-hetzner:v2026.9.2`),
+with a floating `v2026.9` and `latest` published alongside.
 
 ## Artifacts
 
@@ -30,5 +48,6 @@ helm install karpenter-provider-hetzner \
   --set clusterName=$CLUSTER_NAME
 ```
 
-Pre-1.0 releases may break without notice. Pin a specific version in
-production.
+CalVer carries no major-version compatibility signal, so any release may
+break without notice. Pin a specific version (e.g. `--version
+v2026.9.2`) in production.

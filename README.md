@@ -4,7 +4,7 @@ A [Karpenter](https://karpenter.sh) cloud provider for [Hetzner Cloud](https://w
 
 ## Status
 
-**Alpha (pre-1.0).** The controller embeds Karpenter v1.14, reconciles HCloudNodeClass resources, resolves images and dependencies, prices Hetzner offerings, and manages server lifecycle and drift. The implementation is usable for testing, but production hardening and end-to-end cluster coverage are still in progress.
+**Alpha.** Releases are tagged CalVer (`YYYY.M.patch`, e.g. `v2026.9.2` — see [DISTRIBUTION.md](DISTRIBUTION.md)), so there is no major-version compatibility signal and breaking changes can land in any release. The controller embeds Karpenter v1.14, reconciles HCloudNodeClass resources, resolves images and dependencies, prices Hetzner offerings, and manages server lifecycle and drift. The implementation is usable for testing, but production hardening and end-to-end cluster coverage are still in progress.
 
 ## Layout
 
