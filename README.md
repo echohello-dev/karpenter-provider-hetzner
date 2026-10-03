@@ -59,15 +59,17 @@ The end-to-end suite (`test/e2e`) lifts that fake into a multi-step scenario har
 mise run e2e
 ```
 
-It covers the full local story — `HCloudNodeClass` reconcile → `Ready=True` with `status.resolvedImages` populated, then `CloudProvider.Create → Get → IsDrifted → Delete` asserting labels, ProviderID, and capacity/allocatable. No Hetzner account or Kubernetes cluster is required. The first run downloads the envtest binaries (`kube-apiserver`, `etcd`) through `setup-envtest`; `mise run envtest-setup` does that download standalone. Without those binaries (or `KUBEBUILDER_ASSETS`) the suite skips cleanly, so `mise run test` and `mise run ci` stay green on machines that never run it.
+It covers the full local story — `HCloudNodeClass` reconcile → `Ready=True` with `status.resolvedImages` populated, then `CloudProvider.Create → Get → IsDrifted → Delete` asserting labels, ProviderID, and capacity/allocatable. No Hetzner account or Kubernetes cluster is required. The first run downloads the envtest binaries (`kube-apiserver`, `etcd`) through `setup-envtest`; `mise run envtest-setup` does that download standalone. Without those binaries (or `KUBEBUILDER_ASSETS`) the envtest scenarios skip cleanly, so `mise run test` and `mise run ci` stay green on machines that never run them. Smoke-test regression scenarios use a local HTTP fake and run without envtest binaries or Hetzner credentials.
 
-An opt-in smoke test also runs the same round-trip against the **live Hetzner Cloud API**, creating and deleting one real billed server (IPv6-only, default `cx22` in `fsn1`):
+An opt-in smoke test also runs the same round-trip against the **live Hetzner Cloud API**, creating and deleting one real billed server (IPv6-only, cheapest available type by default):
 
 ```bash
 E2E=1 HCLOUD_TOKEN=... mise run e2e
 ```
 
-Optional knobs: `E2E_SERVER_TYPE` (default `cx22`), `E2E_LOCATION` (default `fsn1`), `E2E_CLUSTER_NAME` (default `karpenter-e2e`). It only runs when both `E2E=1` and `HCLOUD_TOKEN` are set, and clean-up runs even when assertions fail.
+Optional knobs: `E2E_SERVER_TYPE` (optional pin; when unset the test auto-selects the cheapest server type Hetzner reports available at `E2E_LOCATION`), `E2E_LOCATION` (default `fsn1`), `E2E_CLUSTER_NAME` (default `karpenter-e2e`). The boot image matches the selected server type's architecture and disk size, using the newest compatible snapshot or a compatible `ubuntu-24.04` system image. The test only runs when both `E2E=1` and `HCLOUD_TOKEN` are set. It waits for server creation to finish, and cleanup runs even when assertions fail, retrying deletion and confirming absence within its two-minute timeout. Cleanup failure fails the test and reports the server's provider ID.
+
+See [`docs/testing.md`](docs/testing.md) for the full testing guide (layers, environment variables, live-API gotchas).
 
 ## Naming
 

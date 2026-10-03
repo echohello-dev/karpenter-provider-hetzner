@@ -29,6 +29,7 @@ See `mise.toml` for defined tasks. The standard tasks for this provider are:
 - Every managed Hetzner server carries the `karpenter.sh/cluster=<CLUSTER_NAME>` label. `LIST`/`DELETE` operations are scoped by that label so two clusters sharing one Hetzner project cannot see each other's servers. The controller fails fast if `CLUSTER_NAME` is empty.
 - Karpenter does not have a Hetzner spot market, so every instance is `capacity-type=on-demand`. The Instancetype label is always hard-coded.
 - Hetzner bills the primary IPv4 separately. On private-network clusters set `enablePublicIPv4: false` to drop the cost.
+- Hetzner reserves every server-label key containing `hetzner.cloud`. The provider renames the two affected keys onto `karpenter.sh/*` at the hcloud label boundary (`toHcloudLabelKey` in `pkg/cloudprovider`); keep NodePool requirement keys canonical. See `docs/adr/0002-hcloud-safe-label-keys.md`.
 
 ## Repo Conventions
 
