@@ -37,6 +37,24 @@ description = "Run unit tests with race detector"
 alias = "t"
 run = ["go test -race -count=1 ./..."]
 
+[tasks.envtest-setup]
+description = "Download controller-runtime envtest binaries (kube-apiserver, etcd) via setup-envtest"
+run = "go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use 1.34.0 -p path"
+
+[tasks.e2e]
+description = "Run the e2e suite (envtest CRDs + real reconciler + fake hcloud); skips cleanly without envtest binaries"
+alias = "e"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -z "${KUBEBUILDER_ASSETS:-}" ]; then
+  echo "KUBEBUILDER_ASSETS not set; downloading envtest binaries (mise run envtest-setup)..."
+  KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use 1.34.0 -p path)"
+fi
+export KUBEBUILDER_ASSETS
+go test -count=1 -timeout 30m -v ./test/e2e/...
+"""
+
 [tasks.lint]
 description = "Run golangci-lint"
 alias = "l"
