@@ -531,7 +531,11 @@ func (b *Backend) handleServerCreate(w http.ResponseWriter, r *http.Request) {
 		srv.schema.PublicNet.IPv4 = schema.ServerPublicNetIPv4{IP: "1.2.3.4"}
 	}
 	if req.PublicNet != nil && req.PublicNet.EnableIPv6 {
-		srv.schema.PublicNet.IPv6 = schema.ServerPublicNetIPv6{IP: "::1"}
+		// Hetzner returns the primary IPv6 as a CIDR (its /64 block), and
+		// hcloud-go parses that field with net.ParseCIDR while discarding
+		// the error — a bare address would decode to a nil IP, which makes
+		// IsUnspecified() report "no IPv6" on a server that has one.
+		srv.schema.PublicNet.IPv6 = schema.ServerPublicNetIPv6{IP: "2001:db8::1/64"}
 	}
 	b.servers[id] = srv
 
