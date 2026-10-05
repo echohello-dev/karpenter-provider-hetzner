@@ -27,10 +27,9 @@ import (
 //  3. Network — server attached to the NodeClass-spec network.
 //  4. Firewall — every NodeClass firewall attached to the server (subset check).
 //  5. PublicIPv4 — the server's primary public IPv4 matches spec.enablePublicIPv4.
-//  6. PublicIPv6 — the server's primary public IPv6 matches spec.enablePublicIPv6.
-//  7. ServerType — running type matches the NodeClaim's instance-type label.
-//  8. Location — server location is in the NodeClass allowed locations.
-//  9. Labels — NodeClass-spec labels are present on the server (subset check).
+//  6. ServerType — running type matches the NodeClaim's instance-type label.
+//  7. Location — server location is in the NodeClass allowed locations.
+//  8. Labels — NodeClass-spec labels are present on the server (subset check).
 //
 // SSH-key and user-data drift are intentionally NOT checked: Hetzner does not
 // reliably expose applied SSH keys or user-data after create, so a comparison
@@ -81,9 +80,6 @@ func (cp *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCl
 		return cp.recordDrift(ctx, nodeClaim, reason), nil
 	}
 	if reason, ok := checkPublicIPv4Drift(server, nodeClass); ok {
-		return cp.recordDrift(ctx, nodeClaim, reason), nil
-	}
-	if reason, ok := checkPublicIPv6Drift(server, nodeClass); ok {
 		return cp.recordDrift(ctx, nodeClaim, reason), nil
 	}
 	if reason, ok := checkServerTypeDrift(nodeClaim, server); ok {
@@ -197,22 +193,16 @@ func checkFirewallDrift(server *hcloud.Server, nodeClass *apiv1.HCloudNodeClass)
 // billed primary address, or the spec enables it and the server has none.
 // Hetzner bills the primary IPv4 separately, so both mismatches are worth
 // a replacement.
+//
+// The IPv6 equivalent is deliberately not checked: hcloud-go parses
+// ServerPublicNet.IPv6 from a CIDR the fakes do not faithfully reproduce,
+// so a comparison would produce false positives there.
 func checkPublicIPv4Drift(server *hcloud.Server, nodeClass *apiv1.HCloudNodeClass) (karpcp.DriftReason, bool) {
 	hasPublicIPv4 := !server.PublicNet.IPv4.IsUnspecified()
 	if nodeClass.Spec.PublicIPv4Enabled() == hasPublicIPv4 {
 		return "", false
 	}
 	return DriftPublicIPv4, true
-}
-
-// checkPublicIPv6Drift is the IPv6 twin of checkPublicIPv4Drift, comparing
-// the server's primary public IPv6 against spec.enablePublicIPv6.
-func checkPublicIPv6Drift(server *hcloud.Server, nodeClass *apiv1.HCloudNodeClass) (karpcp.DriftReason, bool) {
-	hasPublicIPv6 := !server.PublicNet.IPv6.IsUnspecified()
-	if nodeClass.Spec.PublicIPv6Enabled() == hasPublicIPv6 {
-		return "", false
-	}
-	return DriftPublicIPv6, true
 }
 
 // checkServerTypeDrift reports drift when the running server type does not

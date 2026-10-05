@@ -50,7 +50,6 @@ const (
 	DriftNetwork       karpcp.DriftReason = "NetworkDrift"
 	DriftFirewall      karpcp.DriftReason = "FirewallDrift"
 	DriftPublicIPv4    karpcp.DriftReason = "PublicIPv4Drift"
-	DriftPublicIPv6    karpcp.DriftReason = "PublicIPv6Drift"
 	DriftServerType    karpcp.DriftReason = "ServerTypeDrift"
 	DriftLocation      karpcp.DriftReason = "LocationDrift"
 	DriftLabels        karpcp.DriftReason = "LabelsDrift"

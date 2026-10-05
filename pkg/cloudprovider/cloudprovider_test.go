@@ -124,9 +124,9 @@ func readyNodeClass(t *testing.T, nc *apiv1.HCloudNodeClass) {
 // optional attachments. Tests use this to construct the "already-exists"
 // scenarios for Get / List / Drift paths. Always x86 — the tests that need
 // a different architecture can extend this helper. Attaches a primary
-// public IPv4 and IPv6 by default (the provider's create defaults enable
-// both); tests exercising missing-address scenarios can zero the
-// PublicNet fields on the returned server.
+// public IPv4 by default (the provider's create enables it unless the
+// NodeClass says otherwise); tests exercising the missing-address scenario
+// can zero srv.PublicNet.IPv4 on the returned server.
 func hcloudServerForTest(id int64, name string, stName string, location string, networkID int64, firewallIDs []int64, imageID int64, labels map[string]string) *hcloud.Server {
 	srv := &hcloud.Server{
 		ID:     id,
@@ -144,8 +144,6 @@ func hcloudServerForTest(id int64, name string, stName string, location string, 
 		Labels:   labels,
 	}
 	srv.PublicNet.IPv4 = hcloud.ServerPublicNetIPv4{IP: net.ParseIP("203.0.113.10")}
-	ipv6, ipv6Net, _ := net.ParseCIDR("2001:db8:1::/64")
-	srv.PublicNet.IPv6 = hcloud.ServerPublicNetIPv6{IP: ipv6, Network: ipv6Net}
 	if networkID != 0 {
 		srv.PrivateNet = []hcloud.ServerPrivateNet{{Network: &hcloud.Network{ID: networkID}}}
 	}
@@ -190,18 +188,12 @@ func serverToSchema(srv *hcloud.Server) hcloudschema.Server {
 	if srv.Image != nil {
 		out.Image = &hcloudschema.Image{ID: srv.Image.ID, Architecture: string(srv.Image.Architecture)}
 	}
-	// hcloud's server schema encodes the primary IPv4 as a plain address and
-	// the primary IPv6 as a CIDR (its /64 network); keep that shape so the
-	// httptest round-trip lands back on the same fields.
+	// hcloud's server schema encodes the primary IPv4 as a plain address;
+	// keep that shape so the httptest round-trip lands back on the same
+	// field. (The IPv6 field is CIDR-shaped in the real API but nothing in
+	// this package reads it, so it is not serialized here.)
 	if srv.PublicNet.IPv4.IP != nil {
 		out.PublicNet.IPv4 = hcloudschema.ServerPublicNetIPv4{IP: srv.PublicNet.IPv4.IP.String()}
-	}
-	if srv.PublicNet.IPv6.IP != nil {
-		ipv6 := srv.PublicNet.IPv6.IP.String() + "/64"
-		if srv.PublicNet.IPv6.Network != nil {
-			ipv6 = srv.PublicNet.IPv6.Network.String()
-		}
-		out.PublicNet.IPv6 = hcloudschema.ServerPublicNetIPv6{IP: ipv6}
 	}
 	for _, pn := range srv.PrivateNet {
 		if pn.Network != nil {
@@ -1251,8 +1243,8 @@ func TestIsDrifted_LabelsDrift(t *testing.T) {
 // TestIsDrifted_NoDrift confirms a server whose attributes all match
 // returns an empty drift reason. Includes a matching status.resolvedImages
 // entry so the image-selector check is exercised in its "consistent" state,
-// and the fixture's default primary IPv4/IPv6 satisfy the enabled
-// public-IP checks.
+// and the fixture's default primary IPv4 satisfies the enabled public-IP
+// check.
 func TestIsDrifted_NoDrift(t *testing.T) {
 	nc := validNodeClass("default")
 	nc.Spec.Labels = map[string]string{"workload": "gpu"}
@@ -1429,32 +1421,6 @@ func TestIsDrifted_PublicIPv4ConsistentWhenDisabled(t *testing.T) {
 	}
 	if reason != "" {
 		t.Fatalf("expected no drift, got %q", reason)
-	}
-}
-
-// TestIsDrifted_PublicIPv6DriftWhenDisabledButAttached is the IPv6 twin of
-// the public IPv4 check.
-func TestIsDrifted_PublicIPv6DriftWhenDisabledButAttached(t *testing.T) {
-	nc := validNodeClass("default")
-	enabled := false
-	nc.Spec.EnablePublicIPv6 = &enabled
-	env := newTestEnv(t, nc)
-	env.mux.HandleFunc("/servers/24", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// hcloudServerForTest attaches a primary public IPv6 by default.
-		_, _ = w.Write(hcloudServerJSON(t, hcloudServerForTest(24, "k13", "cx22", "fsn1", 12345, []int64{9001}, 12, map[string]string{"karpenter.sh/cluster": "cluster-a"})))
-	})
-	cp := newCloudProvider(env)
-	claim := newNodeClaim("nc-v6", "default", nil, nil)
-	claim.Status.ProviderID = instance.FormatProviderID(24)
-	claim.Status.ImageID = "12"
-	claim.Labels[corev1.LabelInstanceTypeStable] = "cx22"
-	reason, err := cp.IsDrifted(context.Background(), claim)
-	if err != nil {
-		t.Fatalf("IsDrifted: %v", err)
-	}
-	if reason != DriftPublicIPv6 {
-		t.Fatalf("expected %q, got %q", DriftPublicIPv6, reason)
 	}
 }
 

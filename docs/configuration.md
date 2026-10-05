@@ -212,7 +212,7 @@ flags NodeClaims for replacement when, in this order:
 - the server is not attached to the NodeClass `spec.networkID`,
 - a firewall listed in `spec.firewallIDs` is no longer applied to the server,
 - the server's primary public IPv4 does not match `spec.enablePublicIPv4`
-  (and the IPv6 equivalent, `spec.enablePublicIPv6`) in either direction,
+  in either direction,
 - the running server type differs from the NodeClaim's instance-type label,
 - the server's location is not in `spec.locations`,
 - or a label from `spec.labels` is missing or has a different value on the server.

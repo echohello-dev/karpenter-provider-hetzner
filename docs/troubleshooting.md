@@ -225,7 +225,7 @@ hcloud server list -o columns=id,name,labels
 - **`DriftPublicIPv4`** — the server's primary IPv4 attachment disagrees
   with `spec.enablePublicIPv4` in either direction: a billed IPv4 is
   still attached after `enablePublicIPv4: false`, or the server has none
-  after `true`. `DriftPublicIPv6` is the IPv6 equivalent.
+  after `true`. (IPv6 is not drift-checked.)
 
 - **`DriftLabels`** — server labels drifted from the NodeClass spec.
   This is almost always a manual `hcloud server update` or a second
