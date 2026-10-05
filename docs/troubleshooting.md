@@ -239,9 +239,11 @@ kubectl patch hcloudnodeclass default --type=merge \
 Existing servers keep their public IPv4 until they're replaced. Flipping
 the field fires `DriftPublicIPv4` (the server still has a primary IPv4
 while the NodeClass says it should not — the reverse mismatch fires the
-same reason), and Karpenter replaces the node; the new server comes up
-without the address. Expect node churn: every managed node is recycled
-when `enablePublicIPv4` changes.
+same reason), and Karpenter replaces each mismatched node; the new server
+comes up without the address. Expect node churn: every node whose
+attachment disagrees with the new setting is replaced — on a uniform
+fleet that is all of them. Nodes already matching the new value are left
+alone.
 
 ## Logs and metrics
 

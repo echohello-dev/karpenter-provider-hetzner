@@ -137,7 +137,7 @@ func checkImageSelectorDrift(nodeClaim *karpv1.NodeClaim, nodeClass *apiv1.HClou
 		return "", false
 	}
 	resolved := imageFromStatus(nodeClass, resolveArchitecture(arch))
-	if resolved == nil || resolved.Image == nil {
+	if resolved == nil {
 		return "", false
 	}
 	if fmt.Sprintf("%d", resolved.Image.ID) == nodeClaim.Status.ImageID {
