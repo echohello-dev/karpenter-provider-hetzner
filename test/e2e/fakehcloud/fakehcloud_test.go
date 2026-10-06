@@ -193,3 +193,49 @@ func TestImageListFiltering(t *testing.T) {
 		t.Fatalf("label selector matched %v, want none", empty)
 	}
 }
+
+// TestServerCreatePublicIPsRoundTrip pins the fake's public-net wire format
+// to what Hetzner actually returns: a primary IPv4 address and a primary
+// IPv6 in CIDR form.
+//
+// hcloud-go decodes the IPv6 with net.ParseCIDR and discards the error, so a
+// bare address like "::1" decodes to a nil IP. The SDK's IsUnspecified() then
+// reports "no IPv6" on a server that does have one, which makes the provider's
+// public-IP drift checks fire on a freshly created server.
+func TestServerCreatePublicIPsRoundTrip(t *testing.T) {
+	backend := fakehcloud.New(testCatalog())
+	t.Cleanup(backend.Close)
+	ctx := context.Background()
+
+	created, _, err := backend.Client().Server.Create(ctx, hcloud.ServerCreateOpts{
+		Name:       "karpenter-claim-publicnet",
+		ServerType: &hcloud.ServerType{Name: "cx22"},
+		Image:      &hcloud.Image{ID: 12},
+		Location:   &hcloud.Location{Name: "fsn1"},
+		PublicNet:  &hcloud.ServerCreatePublicNet{EnableIPv4: true, EnableIPv6: true},
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	assertPublicIPs := func(stage string, server *hcloud.Server) {
+		t.Helper()
+		if server == nil {
+			t.Fatalf("%s: server is nil", stage)
+		}
+		if server.PublicNet.IPv4.IsUnspecified() {
+			t.Errorf("%s: primary IPv4 did not round-trip (got %v)", stage, server.PublicNet.IPv4.IP)
+		}
+		if server.PublicNet.IPv6.IsUnspecified() {
+			t.Errorf("%s: primary IPv6 did not round-trip (got %v) — the fake must emit a CIDR, "+
+				"because hcloud-go parses IPv6 with net.ParseCIDR and drops the error", stage, server.PublicNet.IPv6.IP)
+		}
+	}
+	assertPublicIPs("create response", created.Server)
+
+	got, _, err := backend.Client().Server.GetByID(ctx, created.Server.ID)
+	if err != nil {
+		t.Fatalf("get server: %v", err)
+	}
+	assertPublicIPs("get response", got)
+}
