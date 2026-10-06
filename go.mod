@@ -6,10 +6,10 @@ require (
 	github.com/awslabs/operatorpkg v0.0.0-20260708223819-4da4c353c5fa
 	github.com/hetznercloud/hcloud-go/v2 v2.48.0
 	github.com/prometheus/client_golang v1.24.1
-	k8s.io/api v0.37.0
-	k8s.io/apimachinery v0.37.0
-	k8s.io/client-go v0.37.0
-	sigs.k8s.io/controller-runtime v0.25.0
+	k8s.io/api v0.37.1
+	k8s.io/apimachinery v0.37.1
+	k8s.io/client-go v0.37.1
+	sigs.k8s.io/controller-runtime v0.25.2
 	sigs.k8s.io/karpenter v1.14.1
 )
 
