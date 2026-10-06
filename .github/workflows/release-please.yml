@@ -14,6 +14,20 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      # release-please must act with a credential other than GITHUB_TOKEN.
+      # GitHub does not create normal workflow runs for events produced by
+      # GITHUB_TOKEN, so without this secret every release PR gets an
+      # approval-gated run with zero jobs and every release it publishes is
+      # silent — goreleaser never ran, so no images or charts were ever
+      # published. Fail loudly instead of degrading to that state.
+      - name: Require RELEASE_PLEASE_TOKEN
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "${RELEASE_PLEASE_TOKEN}" ]; then
+            echo "::error title=RELEASE_PLEASE_TOKEN missing::release-please would fall back to GITHUB_TOKEN, which cannot trigger workflows: CI on its PRs sits approval-gated with zero jobs and its releases never fire goreleaser. Create the secret with gh secret set RELEASE_PLEASE_TOKEN -R ${GITHUB_REPOSITORY}"
+            exit 1
+          fi
       - uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
