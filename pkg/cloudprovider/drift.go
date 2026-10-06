@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	karpcp "sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -18,12 +19,17 @@ import (
 //
 // Drift checks performed (in order, short-circuited):
 //
-//  1. Image — NodeClaim.Status.ImageID vs the server's current image ID.
-//  2. Network — server attached to the NodeClass-spec network.
-//  3. Firewall — every NodeClass firewall attached to the server (subset check).
-//  4. ServerType — running type matches the NodeClaim's instance-type label.
-//  5. Location — server location is in the NodeClass allowed locations.
-//  6. Labels — NodeClass-spec labels are present on the server (subset check).
+//  1. Image — NodeClaim.Status.ImageID vs the server's current image ID
+//     (catches out-of-band changes on the running server).
+//  2. ImageSelector — NodeClaim.Status.ImageID vs the NodeClass's
+//     status.resolvedImages entry for the NodeClaim's architecture (catches
+//     spec.imageSelector edits; skipped when status has no usable entry).
+//  3. Network — server attached to the NodeClass-spec network.
+//  4. Firewall — every NodeClass firewall attached to the server (subset check).
+//  5. PublicIPv4 — the server's primary public IPv4 matches spec.enablePublicIPv4.
+//  6. ServerType — running type matches the NodeClaim's instance-type label.
+//  7. Location — server location is in the NodeClass allowed locations.
+//  8. Labels — NodeClass-spec labels are present on the server (subset check).
 //
 // SSH-key and user-data drift are intentionally NOT checked: Hetzner does not
 // reliably expose applied SSH keys or user-data after create, so a comparison
@@ -64,10 +70,16 @@ func (cp *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCl
 	if reason, ok := checkImageDrift(nodeClaim, server); ok {
 		return cp.recordDrift(ctx, nodeClaim, reason), nil
 	}
+	if reason, ok := checkImageSelectorDrift(nodeClaim, nodeClass); ok {
+		return cp.recordDrift(ctx, nodeClaim, reason), nil
+	}
 	if reason, ok := checkNetworkDrift(server, nodeClass); ok {
 		return cp.recordDrift(ctx, nodeClaim, reason), nil
 	}
 	if reason, ok := checkFirewallDrift(server, nodeClass); ok {
+		return cp.recordDrift(ctx, nodeClaim, reason), nil
+	}
+	if reason, ok := checkPublicIPv4Drift(server, nodeClass); ok {
 		return cp.recordDrift(ctx, nodeClaim, reason), nil
 	}
 	if reason, ok := checkServerTypeDrift(nodeClaim, server); ok {
@@ -100,6 +112,34 @@ func checkImageDrift(nodeClaim *karpv1.NodeClaim, server *hcloud.Server) (karpcp
 		return "", false
 	}
 	return DriftImage, true
+}
+
+// checkImageSelectorDrift reports drift when the image the NodeClaim booted
+// no longer matches the image the NodeClass's spec.imageSelector currently
+// resolves to for the NodeClaim's architecture. The NodeClass reconciler
+// records that resolution in status.resolvedImages, so editing imageSelector
+// replaces running nodes instead of only affecting future ones.
+//
+// The check is skipped — reported as no drift — when the NodeClaim's image
+// is not yet observed, when its architecture is unknown, or when the NodeClass
+// status carries no usable entry for that architecture (absent or zero image
+// ID). An empty or partial status must never churn nodes.
+func checkImageSelectorDrift(nodeClaim *karpv1.NodeClaim, nodeClass *apiv1.HCloudNodeClass) (karpcp.DriftReason, bool) {
+	if nodeClaim.Status.ImageID == "" {
+		return "", false
+	}
+	arch := nodeClaim.Labels[corev1.LabelArchStable]
+	if arch == "" {
+		return "", false
+	}
+	resolved := imageFromStatus(nodeClass, resolveArchitecture(arch))
+	if resolved == nil {
+		return "", false
+	}
+	if fmt.Sprintf("%d", resolved.Image.ID) == nodeClaim.Status.ImageID {
+		return "", false
+	}
+	return DriftImageSelector, true
 }
 
 // checkNetworkDrift reports drift when the running server is not attached to
@@ -145,6 +185,24 @@ func checkFirewallDrift(server *hcloud.Server, nodeClass *apiv1.HCloudNodeClass)
 		}
 	}
 	return "", false
+}
+
+// checkPublicIPv4Drift reports drift when the server's primary public IPv4
+// attachment disagrees with the NodeClass's enablePublicIPv4 setting in
+// either direction: the spec disables it but the server still carries the
+// billed primary address, or the spec enables it and the server has none.
+// Hetzner bills the primary IPv4 separately, so both mismatches are worth
+// a replacement.
+//
+// The IPv6 equivalent is deliberately not checked: hcloud-go parses
+// ServerPublicNet.IPv6 from a CIDR the fakes do not faithfully reproduce,
+// so a comparison would produce false positives there.
+func checkPublicIPv4Drift(server *hcloud.Server, nodeClass *apiv1.HCloudNodeClass) (karpcp.DriftReason, bool) {
+	hasPublicIPv4 := !server.PublicNet.IPv4.IsUnspecified()
+	if nodeClass.Spec.PublicIPv4Enabled() == hasPublicIPv4 {
+		return "", false
+	}
+	return DriftPublicIPv4, true
 }
 
 // checkServerTypeDrift reports drift when the running server type does not
