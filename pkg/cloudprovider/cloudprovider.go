@@ -45,12 +45,14 @@ const (
 // Server attribute and produces a structured INFO log + a Prometheus counter
 // when triggered.
 const (
-	DriftImage      karpcp.DriftReason = "ImageDrift"
-	DriftNetwork    karpcp.DriftReason = "NetworkDrift"
-	DriftFirewall   karpcp.DriftReason = "FirewallDrift"
-	DriftServerType karpcp.DriftReason = "ServerTypeDrift"
-	DriftLocation   karpcp.DriftReason = "LocationDrift"
-	DriftLabels     karpcp.DriftReason = "LabelsDrift"
+	DriftImage         karpcp.DriftReason = "ImageDrift"
+	DriftImageSelector karpcp.DriftReason = "ImageSelectorDrift"
+	DriftNetwork       karpcp.DriftReason = "NetworkDrift"
+	DriftFirewall      karpcp.DriftReason = "FirewallDrift"
+	DriftPublicIPv4    karpcp.DriftReason = "PublicIPv4Drift"
+	DriftServerType    karpcp.DriftReason = "ServerTypeDrift"
+	DriftLocation      karpcp.DriftReason = "LocationDrift"
+	DriftLabels        karpcp.DriftReason = "LabelsDrift"
 )
 
 // CloudProvider implements karpcp.CloudProvider against the Hetzner Cloud API.
