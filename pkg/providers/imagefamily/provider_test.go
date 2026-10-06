@@ -647,3 +647,51 @@ func TestValidateFamily(t *testing.T) {
 		}
 	}
 }
+
+// TestResolve_PreferredIDKeepsResolutionSticky pins the stickiness rule:
+// a previously resolved image keeps winning while it still matches, even
+// once a newer snapshot appears; a preferred ID that is unknown or no
+// longer satisfies the selector falls back to the newest match.
+func TestResolve_PreferredIDKeepsResolutionSticky(t *testing.T) {
+	older := newImage(11, "talos v1.9.5", hcloud.ArchitectureX86, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	newer := newImage(12, "talos v1.9.6", hcloud.ArchitectureX86, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+	newest := newImage(14, "talos v1.9.7", hcloud.ArchitectureX86, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC))
+	unrelated := newImage(99, "ubuntu-22.04", hcloud.ArchitectureX86, time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC))
+
+	cases := []struct {
+		name      string
+		images    []schema.Image
+		preferred int64
+		version   string
+		want      int64
+	}{
+		{"no preference picks the newest", []schema.Image{older, newer, newest}, 0, "", 14},
+		{"preferred survives a newer snapshot", []schema.Image{older, newer, newest}, 12, "", 12},
+		{"unknown preferred falls back to the newest", []schema.Image{older, newer}, 4242, "", 12},
+		{"selector edit that excludes the preferred image re-resolves", []schema.Image{older, newer, newest}, 12, "v1.9.7", 14},
+		{"preferred that no longer matches the family falls back", []schema.Image{older, unrelated}, 99, "", 11},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newFakeImageServer(t)
+			ts.pageMap["1"] = fakeImagePage{
+				images: tc.images,
+				page:   1, lastPage: 1, total: len(tc.images),
+			}
+			p := New(newClient(t, ts))
+
+			var opts []ResolveOption
+			if tc.preferred != 0 {
+				opts = append(opts, WithPreferredID(tc.preferred))
+			}
+			sel := apiv1.ImageSelector{Family: FamilyTalos, Version: tc.version}
+			got, err := p.Resolve(context.Background(), sel, hcloud.ArchitectureX86, opts...)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if got.Image.ID != tc.want {
+				t.Fatalf("Resolve(preferred=%d, version=%q) = image %d, want %d", tc.preferred, tc.version, got.Image.ID, tc.want)
+			}
+		})
+	}
+}
