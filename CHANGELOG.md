@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026.9.3](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v2026.9.2...v2026.9.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* **ci:** run CI on release-please PRs with trusted token ([#52](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/52)) ([8ceedc3](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/8ceedc33eee17ad44627b5f71140fd46950cfc8a))
+* detect image-selector and public-IP drift ([#51](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/51)) ([2676f8f](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/2676f8f0cdadaca2b0812a9f03b9bf7df9517b06))
+* keep image resolution sticky while the selector is unchanged ([#58](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/58)) ([a78cbd2](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/a78cbd2915e709cf4f57517b5aa044d6d331c88c))
+* refresh pricing and boot images from NodeClass status ([#46](https://github.com/echohello-dev/karpenter-provider-hetzner/issues/46)) ([d7de13f](https://github.com/echohello-dev/karpenter-provider-hetzner/commit/d7de13f6228df6ed40e3cbe1cc23d619440992d2))
+
 ## [2026.9.2](https://github.com/echohello-dev/karpenter-provider-hetzner/compare/v2026.9.2...v2026.9.2) (2026-09-20)
 
 
