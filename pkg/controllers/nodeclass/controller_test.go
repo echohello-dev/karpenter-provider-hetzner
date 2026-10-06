@@ -3,7 +3,6 @@ package nodeclass
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -131,7 +130,7 @@ func happyPathMux() *http.ServeMux {
 	}))
 	mux.HandleFunc("/networks/12345", networkHandler("cluster-net"))
 	mux.HandleFunc("/firewalls/9001", firewallHandler(9001, "node-firewall"))
-	mux.HandleFunc("/ssh_keys/7001", sshKeyHandler(7001))
+	mux.HandleFunc("/ssh_keys/7001", sshKeyHandler())
 	mux.HandleFunc("/locations", locationsHandler([]schema.Location{
 		{Name: "fsn1", ID: 1, NetworkZone: "eu-central"},
 		{Name: "hel1", ID: 2, NetworkZone: "eu-central"},
@@ -214,11 +213,13 @@ func firewallHandler(id int64, name string) http.HandlerFunc {
 	}
 }
 
-func sshKeyHandler(id int64) http.HandlerFunc {
+// sshKeyHandler serves the one SSH key the fixtures reference —
+// validNodeClass always points at 7001, so there is nothing to parameterise.
+func sshKeyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(schema.SSHKeyGetResponse{
-			SSHKey: schema.SSHKey{ID: id, Name: fmt.Sprintf("key-%d", id)},
+			SSHKey: schema.SSHKey{ID: 7001, Name: "key-7001"},
 		})
 	}
 }
@@ -425,7 +426,7 @@ func TestReconcile_MissingFirewallMarksResourcesFalse(t *testing.T) {
 	}))
 	mux.HandleFunc("/networks/12345", networkHandler("n"))
 	mux.HandleFunc("/firewalls/", notFoundHandler)
-	mux.HandleFunc("/ssh_keys/7001", sshKeyHandler(7001))
+	mux.HandleFunc("/ssh_keys/7001", sshKeyHandler())
 	mux.HandleFunc("/locations", locationsHandler([]schema.Location{{Name: "fsn1"}}))
 
 	nc := validNodeClass("no-fw")
@@ -452,7 +453,7 @@ func TestReconcile_UnknownLocationMarksResourcesFalse(t *testing.T) {
 	}))
 	mux.HandleFunc("/networks/12345", networkHandler("n"))
 	mux.HandleFunc("/firewalls/9001", firewallHandler(9001, "fw"))
-	mux.HandleFunc("/ssh_keys/7001", sshKeyHandler(7001))
+	mux.HandleFunc("/ssh_keys/7001", sshKeyHandler())
 	mux.HandleFunc("/locations", locationsHandler([]schema.Location{
 		{Name: "fsn1", ID: 1},
 	}))
@@ -688,4 +689,122 @@ func TestReconcile_UnsupportedImageFamilyMarksFalse(t *testing.T) {
 	if len(got.Status.ResolvedImages) != 0 {
 		t.Fatalf("expected ResolvedImages cleared, got %+v", got.Status.ResolvedImages)
 	}
+}
+
+// mutableImageMux returns the endpoints a successful reconcile needs, with
+// an /images handler that reads *images at request time (so tests can publish
+// a snapshot mid-test) and can be switched to fail like a flaky API.
+func mutableImageMux(images *[]schema.Image, failing *bool) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/images", func(w http.ResponseWriter, r *http.Request) {
+		if failing != nil && *failing {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		imageListHandlerFiltered(*images)(w, r)
+	})
+	mux.HandleFunc("/networks/12345", networkHandler("cluster-net"))
+	mux.HandleFunc("/firewalls/9001", firewallHandler(9001, "node-firewall"))
+	mux.HandleFunc("/ssh_keys/7001", sshKeyHandler())
+	mux.HandleFunc("/locations", locationsHandler([]schema.Location{
+		{Name: "fsn1", ID: 1, NetworkZone: "eu-central"},
+		{Name: "hel1", ID: 2, NetworkZone: "eu-central"},
+	}))
+	return mux
+}
+
+func reconcileNodeClass(t *testing.T, r *Reconciler, name string) {
+	t.Helper()
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: name}}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+}
+
+func assertResolvedImages(t *testing.T, nc *apiv1.HCloudNodeClass, want map[string]int64) {
+	t.Helper()
+	got := make(map[string]int64, len(nc.Status.ResolvedImages))
+	for _, ri := range nc.Status.ResolvedImages {
+		got[ri.Architecture] = ri.ImageID
+	}
+	if len(got) != len(want) {
+		t.Fatalf("resolvedImages = %v, want %v", got, want)
+	}
+	for arch, id := range want {
+		if got[arch] != id {
+			t.Errorf("resolvedImages[%s] = %d, want %d", arch, got[arch], id)
+		}
+	}
+}
+
+// TestReconcile_ResolutionStickyUntilSelectorChanges pins the churn rule the
+// image-selector drift check depends on: publishing a snapshot that matches
+// the current selector must NOT move status.resolvedImages, while editing
+// the selector so the recorded image stops matching must.
+func TestReconcile_ResolutionStickyUntilSelectorChanges(t *testing.T) {
+	arm := amd64Image(13, "talos v1.9.7", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	arm.Architecture = string(hcloud.ArchitectureARM)
+	// Capacity covers the snapshot the test publishes mid-flight below.
+	images := make([]schema.Image, 0, 4)
+	images = append(images,
+		amd64Image(11, "talos v1.9.5", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		amd64Image(12, "talos v1.9.6", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)),
+		arm,
+	)
+
+	nc := validNodeClass("sticky")
+	env := newTestEnv(t, mutableImageMux(&images, nil), nc)
+	r := New(env.kubeClient, env.hcloud)
+
+	// First pass: newest per architecture.
+	reconcileNodeClass(t, r, "sticky")
+	assertResolvedImages(t, env.getNodeClass(t, "sticky"), map[string]int64{"amd64": 12, "arm64": 13})
+
+	// A newer amd64 snapshot lands in the project. The selector did not
+	// change, so the resolution must not move — otherwise every node would
+	// be replaced for someone else's snapshot push.
+	images = append(images, amd64Image(14, "talos v1.9.7", time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)))
+	reconcileNodeClass(t, r, "sticky")
+	assertResolvedImages(t, env.getNodeClass(t, "sticky"), map[string]int64{"amd64": 12, "arm64": 13})
+
+	// The operator pins the selector to the new version: the recorded amd64
+	// image no longer matches, so resolution moves (and the drift check has
+	// something real to act on). arm64 still matches, so it stays put.
+	stored := env.getNodeClass(t, "sticky")
+	stored.Spec.ImageSelector.Version = "v1.9.7"
+	if err := env.kubeClient.Update(context.Background(), stored); err != nil {
+		t.Fatalf("updating imageSelector: %v", err)
+	}
+	reconcileNodeClass(t, r, "sticky")
+	assertResolvedImages(t, env.getNodeClass(t, "sticky"), map[string]int64{"amd64": 14, "arm64": 13})
+}
+
+// TestReconcile_APIErrorKeepsResolvedImages proves a transient hcloud failure
+// does not erase the recorded images: they are still valid, and clearing them
+// would make the next healthy pass re-pick the newest match — churning nodes
+// over a blip.
+func TestReconcile_APIErrorKeepsResolvedImages(t *testing.T) {
+	images := []schema.Image{
+		amd64Image(11, "talos v1.9.5", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		amd64Image(12, "talos v1.9.6", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)),
+		arm64Image(13, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+	}
+	failing := false
+
+	nc := validNodeClass("blip")
+	env := newTestEnv(t, mutableImageMux(&images, &failing), nc)
+	r := New(env.kubeClient, env.hcloud)
+
+	reconcileNodeClass(t, r, "blip")
+	assertResolvedImages(t, env.getNodeClass(t, "blip"), map[string]int64{"amd64": 12, "arm64": 13})
+
+	failing = true
+	reconcileNodeClass(t, r, "blip")
+
+	got := env.getNodeClass(t, "blip")
+	c := mustCondition(t, got, apiv1.ConditionTypeImagesReady)
+	if c.Status != metav1.ConditionFalse || c.Reason != "ImageResolutionFailed" {
+		t.Fatalf("expected ImagesReady=False/ImageResolutionFailed, got %+v", c)
+	}
+	assertResolvedImages(t, got, map[string]int64{"amd64": 12, "arm64": 13})
 }

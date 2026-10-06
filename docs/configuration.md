@@ -103,8 +103,10 @@ must match.
 #### `imageSelector.version` *(optional, string)*
 
 Case-insensitive substring match against the snapshot description (e.g.
-`"v1.9"` or `"24.04"`). When omitted, the newest matching snapshot wins.
-Ignored when `selector` is set.
+`"v1.9"` or `"24.04"`). When omitted, the newest matching snapshot wins on
+first resolution — and the resolution then stays put, so a later snapshot
+that also matches does not move it (see `status.resolvedImages` below).
+`version` and `selector` are AND-combined when both are set.
 
 ### `firewallIDs` *(optional, []int64)*
 
@@ -187,7 +189,7 @@ status:
 | Field | Meaning |
 |---|---|
 | `status.conditions[]` | Standard Kubernetes conditions. Look at `type=Ready` for the headline signal. |
-| `status.resolvedImages[]` | Image IDs the controller resolved per architecture. Empty when no image matches the selector. |
+| `status.resolvedImages[]` | Image IDs the controller resolved per architecture. Empty when no image matches the selector. Resolution is sticky: an entry is kept while its image still satisfies `spec.imageSelector`, so publishing another matching snapshot leaves it alone — only a selector edit (or the recorded image disappearing) re-resolves. |
 | `status.selectedPlacementGroup` | Hetzner placement group chosen by the NodeClass (only set when `placementGroupStrategy = spread`). |
 
 ## Validation rules (kubebuilder, baked into the CRD)

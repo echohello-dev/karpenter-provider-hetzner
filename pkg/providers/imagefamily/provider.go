@@ -64,6 +64,29 @@ func ValidateFamily(family apiv1.ImageFamily) error {
 	}
 }
 
+// ResolveOption mutates how Resolve picks among the images that match.
+type ResolveOption func(*resolveOptions)
+
+type resolveOptions struct {
+	preferredID int64
+}
+
+// WithPreferredID keeps the previously resolved image when it still
+// satisfies the selector, instead of re-picking the newest match.
+//
+// Resolution is otherwise "newest match wins", which means a freshly built
+// snapshot matching the same selector would silently move the resolution —
+// and everything downstream that reads it (status.resolvedImages, node
+// creation, drift) would follow. Callers that want a spec edit to be the
+// only trigger pass the ID they already recorded: the preferred image is
+// kept while it remains in the match set, and dropped automatically when it
+// stops matching (selector edited) or disappears (image deleted,
+// deprecated). With no preference — or a preferred ID that is no longer a
+// match — Resolve behaves exactly as before and returns the newest match.
+func WithPreferredID(id int64) ResolveOption {
+	return func(o *resolveOptions) { o.preferredID = id }
+}
+
 // Resolve lists available images matching the ImageSelector for the given
 // target architecture and returns the newest match.
 //
@@ -84,12 +107,19 @@ func ValidateFamily(family apiv1.ImageFamily) error {
 // When multiple images match, the most recently created wins and ties
 // (identical Created) are broken by descending image ID. Both fields are
 // monotonically non-decreasing on the Hetzner side, so the order is
-// deterministic across runs.
+// deterministic across runs. A WithPreferredID image that is still in the
+// match set wins over the newest, which is what keeps resolution stable
+// across reconciles (see WithPreferredID).
 //
 // Returns an error wrapping ErrNoMatch when the API answered but nothing
 // satisfies the selector, so callers can separate "spec matches no image"
 // from an API failure.
-func (p *Provider) Resolve(ctx context.Context, sel apiv1.ImageSelector, arch hcloud.Architecture) (*ResolvedImage, error) {
+func (p *Provider) Resolve(ctx context.Context, sel apiv1.ImageSelector, arch hcloud.Architecture, opts ...ResolveOption) (*ResolvedImage, error) {
+	var options resolveOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	family, err := normalizeFamily(sel.Family)
 	if err != nil {
 		return nil, err
@@ -98,18 +128,18 @@ func (p *Provider) Resolve(ctx context.Context, sel apiv1.ImageSelector, arch hc
 		return nil, err
 	}
 
-	opts := hcloud.ImageListOpts{
+	listOpts := hcloud.ImageListOpts{
 		Architecture: []hcloud.Architecture{arch},
 		Type:         []hcloud.ImageType{hcloud.ImageTypeSnapshot},
 		Status:       []hcloud.ImageStatus{hcloud.ImageStatusAvailable},
 	}
 	if labelSel := formatLabelSelector(sel.Selector); labelSel != "" {
-		opts.LabelSelector = labelSel
+		listOpts.LabelSelector = labelSel
 	}
 
-	images, err := p.hcloud.Image.AllWithOpts(ctx, opts)
+	images, err := p.hcloud.Image.AllWithOpts(ctx, listOpts)
 	if err != nil {
-		return nil, fmt.Errorf("imagefamily.Resolve: listing hcloud images (arch=%s, label_selector=%q): %w", arch, opts.LabelSelector, err)
+		return nil, fmt.Errorf("imagefamily.Resolve: listing hcloud images (arch=%s, label_selector=%q): %w", arch, listOpts.LabelSelector, err)
 	}
 
 	version := strings.ToLower(strings.TrimSpace(sel.Version))
@@ -127,6 +157,14 @@ func (p *Provider) Resolve(ctx context.Context, sel apiv1.ImageSelector, arch hc
 	sortImageSelection(matches)
 
 	chosen := matches[0]
+	if options.preferredID != 0 {
+		for _, match := range matches {
+			if match.ID == options.preferredID {
+				chosen = match
+				break
+			}
+		}
+	}
 	if chosen.Architecture != arch {
 		return nil, fmt.Errorf("imagefamily.Resolve: newest match has architecture %s but arch=%s was requested (image id=%d)", chosen.Architecture, arch, chosen.ID)
 	}
