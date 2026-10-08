@@ -1,6 +1,8 @@
-# Goreleaser v2 configuration.
-# Produces multi-arch container images, an OCI-installable Helm chart, SBOMs,
-# cosign signatures, and SLSA L3 provenance.
+# GoReleaser v2 configuration.
+# Produces multi-arch container images, signed checksums, SBOMs, and SLSA L3
+# provenance. The OCI Helm chart is published by release.yml itself (helm
+# package + helm push) — goreleaser's ko pipe builds container images from Go
+# binaries and cannot publish charts.
 
 version: 2
 
@@ -40,11 +42,20 @@ archives:
       - CHANGELOG.md
       - DISTRIBUTION.md
 
+# One image per architecture; the multi-arch tags are assembled by
+# docker_manifests below. GoReleaser v2 has no dockers[].images / .tags /
+# .platforms — image names are templated per entry and "platform" is one
+# entry per goarch.
 dockers:
-  - id: controller
+  - id: controller-amd64
     use: buildx
+    goos: linux
+    goarch: amd64
     dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-amd64"
     build_flag_templates:
+      - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.url=https://github.com/echohello-dev/{{ .ProjectName }}"
       - "--label=org.opencontainers.image.source=https://github.com/echohello-dev/{{ .ProjectName }}"
@@ -52,21 +63,36 @@ dockers:
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .CommitDate }}"
       - "--label=org.opencontainers.image.licenses=Apache-2.0"
-    images:
-      - ghcr.io/echohello-dev/karpenter-provider-hetzner
-    tags:
-      - "v{{ .Version }}"        # plain: v0.1.0
-      - "v{{ .Major }}.{{ .Minor }}"  # floating: v0.1
-      - latest                   # mutable, use with care
-    platforms:
-      - linux/amd64
-      - linux/arm64
+  - id: controller-arm64
+    use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.url=https://github.com/echohello-dev/{{ .ProjectName }}"
+      - "--label=org.opencontainers.image.source=https://github.com/echohello-dev/{{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .CommitDate }}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
 
 docker_manifests:
-  - name_template: ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}
+  - name_template: "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}"
     image_templates:
-      - ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-amd64
-      - ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-arm64
+      - "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-amd64"
+      - "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-arm64"
+  - name_template: "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Major }}.{{ .Minor }}"
+    image_templates:
+      - "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-amd64"
+      - "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-arm64"
+  - name_template: "ghcr.io/echohello-dev/karpenter-provider-hetzner:latest"
+    image_templates:
+      - "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-amd64"
+      - "ghcr.io/echohello-dev/karpenter-provider-hetzner:v{{ .Version }}-arm64"
 
 sboms:
   - id: sbom
@@ -78,18 +104,11 @@ signs:
     signature: '${artifact}.sig'
     certificate: '${artifact}.pem'
     output: false
-    artifacts_globs:
-      - 'sbom'  # sign checksum files via cosign
-
-kos:
-  - ids:
-      - default
-    repository: ghcr.io/echohello-dev/charts/karpenter-provider-hetzner
-    name: karpenter-provider-hetzner
-    base_url: oci://ghcr.io/echohello-dev/charts
-    push_args:
-      - --platform=linux/amd64
-      - --platform=linux/arm64
+    args:
+      - sign-blob
+      - '--output-signature=${signature}'
+      - '--output-certificate=${certificate}'
+      - '${artifact}'
 
 nfpms:
   - id: packages
@@ -132,7 +151,6 @@ release:
     - SBOM: `{{ .ProjectName }}_{{ .Version }}_sbom.spdx.json`
     - Cosign signatures attached to each image digest.
     - SLSA L3 provenance attached as a GitHub attestation.
-  format: standard
 
 changelog:
   use: git
