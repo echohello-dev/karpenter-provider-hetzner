@@ -7,6 +7,18 @@ name: Release
 on:
   release:
     types: [published]
+  # Re-publish artifacts for a tag that has already been released. The
+  # release event fires exactly once per release, and the run it creates uses
+  # the workflow file from the tag's own commit — so re-running that job can
+  # never pick up a fix made on main afterwards. A dispatch runs this file
+  # (from main) and checks out the tag, which is what makes a repair like
+  # v2026.9.3's possible at all.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish artifacts for"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -22,6 +34,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # Release event: the published tag. Dispatch: the requested tag.
+          # Either way goreleaser's HEAD sits on the tag being released.
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
 
       - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492
       - run: mise trust
