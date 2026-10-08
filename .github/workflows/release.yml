@@ -74,3 +74,19 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # goreleaser's ko pipe builds container images from Go binaries, so it
+      # cannot publish the Helm chart — helm push is the actual OCI chart
+      # path, and it runs after goreleaser (which cleans dist/).
+      - name: Publish Helm chart
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          chart_version="${RELEASE_TAG#v}"
+          mkdir -p dist
+          helm package charts/karpenter-provider-hetzner \
+            --version "$chart_version" \
+            --app-version "$chart_version" \
+            --destination dist
+          helm push "dist/karpenter-provider-hetzner-${chart_version}.tgz" oci://ghcr.io/echohello-dev/charts
