@@ -1,0 +1,16 @@
+# Image used by goreleaser. The controller binary is built by goreleaser
+# itself (see builds[] in .goreleaser.yaml) and staged into the build context
+# root, so this only packages it — which is also why it must not build from
+# source: goreleaser's context contains the binary and nothing else, and the
+# arm64 build would otherwise need a cross-compile under emulation.
+#
+# The source-building Dockerfile next to this one stays for local
+# `mise run docker-build`.
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY karpenter-provider-hetzner /bin/karpenter-provider-hetzner
+USER 65532:65532
+
+ENTRYPOINT ["/bin/karpenter-provider-hetzner"]
+
+EXPOSE 8080 8081 9443
