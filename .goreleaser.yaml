@@ -105,11 +105,9 @@ signs:
     certificate: '${artifact}.pem'
     output: false
     args:
+      # Classic cosign (v2.4.x, pinned in release.yml) — the flags goreleaser
+      # expects, writing the .sig/.pem pair next to the checksum file.
       - sign-blob
-      # cosign's new bundle format ignores --output-signature/--output-certificate
-      # (and then fails writing a bundle to an empty path). The legacy format
-      # still emits the .sig/.pem pair goreleaser expects.
-      - '--new-bundle-format=legacy'
       - '--output-signature=${signature}'
       - '--output-certificate=${certificate}'
       - '${artifact}'
