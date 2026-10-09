@@ -106,6 +106,10 @@ signs:
     output: false
     args:
       - sign-blob
+      # cosign's new bundle format ignores --output-signature/--output-certificate
+      # (and then fails writing a bundle to an empty path). The legacy format
+      # still emits the .sig/.pem pair goreleaser expects.
+      - '--new-bundle-format=legacy'
       - '--output-signature=${signature}'
       - '--output-certificate=${certificate}'
       - '${artifact}'
