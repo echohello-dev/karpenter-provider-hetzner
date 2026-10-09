@@ -106,8 +106,11 @@ signs:
     output: false
     args:
       # Classic cosign (v2.4.x, pinned in release.yml) — the flags goreleaser
-      # expects, writing the .sig/.pem pair next to the checksum file.
+      # expects, writing the .sig/.pem pair next to the checksum file. --yes
+      # answers the transparency-log upload prompt, which has no TTY to
+      # answer it in CI (`user declined the prompt`).
       - sign-blob
+      - '--yes'
       - '--output-signature=${signature}'
       - '--output-certificate=${certificate}'
       - '${artifact}'
